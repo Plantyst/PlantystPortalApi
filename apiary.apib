@@ -5,35 +5,39 @@ HOST: https://portal.plantyst.com/api/
 
 Plantyst Portal API is a REST API designed to access data related to customer measurements like basic time series, metrics or annotations.
 
-# Group Authorization OAuth 2.0
+Some API responses use the HAL convention. HAL (Hypertext Application Language) is an standard convention for defining hypermedia such as links to external resources within JSON or XML code. The standard was initially proposed on June 2012 specifically for use with JSON and has since become available in two variations, JSON and XML. The two associated MIME types are media type: application/hal+xml and media type application/hal+json. See also https://en.wikipedia.org/wiki/Hypertext_Application_Language.
+
+# Group OAuth2 Authorization
 
 The authorization for the API calls uses token-based principle _JWT_ (_JSON Web Token_). The token has three main parts:
 
-The OAuth2 workflow is designed to aquire a user token for the access to user resources in Plantyst through the public Api. The token serves as the authorization mechanism for the third party applications. The application needs to be registered in the Plantyst system, having its own client_id, client_secret and redirect_uri properties (to register new application, please contact us at [support@plantyst.com](mailto:support@plantyst.com). To get the access token, the application has to begin by redirecting the user to the following url:
+The OAuth2 workflow is designed to acquire a user token for the access to user resources in Plantyst through the public Api. The token serves as the authorization mechanism for the third party applications. The application needs to be registered in the Plantyst system, having its own client_id, client_secret and redirect_uri properties (to register new application, please contact us at [support@plantyst.com](mailto:support@plantyst.com). To get the access token, the application has to begin by redirecting the user to the following URL:
 
 ## OAuth login
 
 ### Get login page [GET]
-To fet the login page, application has to redirect the user to the following url: [https://portal.plantyst.com/OAuth/Authorize?client_id={client_id}&response_type=code&redirect_uri={url_encoded_redirect_uri}&state={optional_state_string}](https://portal.plantyst.com/OAuth/Authorize?client_id={client_id}&response_type=code&redirect_uri={url_encoded_redirect_uri}&state={optional_state_string}).
+To fet the login page, application has to redirect the user to the following URL: [https://portal.plantyst.com/OAuth/Authorize?client_id={client_id}&response_type=code&redirect_uri={url_encoded_redirect_uri}&state={optional_state_string}](https://portal.plantyst.com/OAuth/Authorize?client_id={client_id}&response_type=code&redirect_uri={url_encoded_redirect_uri}&state={optional_state_string}).
 Where the query string parameters are the following:
 * `client_id` - obtained during the registration process of the application
 * `response_type` - the type of the authorization flow; currently, Platnyst supports only „code“ type
-* `redirect_uri` - absolute Url to which the user will be redirect after successfull login
-* `state` - optional parameter, returned back to redirect Url
+* `redirect_uri` - absolute URI to which the user will be redirect after successfull login
+* `state` - optional parameter, returned back to redirect URL
 
-Once the user logs in and confirms the delegation of the rights to the third party application, the server redirects the user to the given redirect Url and adds the temporary AuthorizationCode to the response query string. The AuthorizationCode has a validity for 5 minutes
+Once the user logs in and confirms the delegation of the rights to the third party application, the server redirects the user to the given redirect URL and adds the temporary authorization code to the response query string. The authorization code is valid for 5 minutes.
+
+In case of a login error, the next procedure is described in the RFC https://tools.ietf.org/html/rfc6749#section-4.2.2.1
 
 + Parameters
-    + client_id (string, `9sgfr867q`) ... Obtained during the registration process of the application.
-    + response_type (string, `code`) ... The type of the authorization flow; currently, Platnyst supports only „code“ type.
-    + redirect_uri (string, `https://url`) ... Absolute Url to which the user will be redirect after successfull login.
-    + state (string, `option`, optional) ... Optional parameter, returned back to redirect Url.
+    + client_id (string, `9sgfr867q`) - Obtained during the registration process of the application.
+    + response_type (string, `code`) - The type of the authorization flow; currently, Platnyst supports only „code“ type.
+    + redirect_uri (string, `https://URL`) - Absolute URI to which the user will be redirect after successfull login.
+    + state (string, `option`, optional) - Optional parameter, returned back to redirect URL.
 
-+ Response 200 (application/hal+json)
++ Response 200 (application/json)
 
-## Obtain token [/OAuth/Token]
+## JWT token [/OAuth/Token]
 
-### Get access token [POST]
+### Access token request [POST]
 To get the actual acces token, the client application sends a POST request to the server with the following parameters:
 * `grant_type` - "authorization_code"
 * `code` - temporary authorizaion code from the first step
@@ -41,9 +45,10 @@ To get the actual acces token, the client application sends a POST request to th
 * `client_id` - client_id of the application
 * `client_secret` - client_secret of the application
 
-The response of the server is the user authorization token (JWT token) that can be used to authorize Api requests by the given user.
+The response of the server is the user authorization token (JWT token) that can be used to authorize Api requests by the given user and contains expires_in which is the number of seconds until the token expires.
+Refresh token is returned as well.
 
-+ Request (application/hal+json)
++ Request (application/json)
     + Attributes
         + `grant_type` (string, required) - "authorization_code"
         + `code` (string, required) - temporary authorizaion code from the first step
@@ -51,18 +56,18 @@ The response of the server is the user authorization token (JWT token) that can 
         + `client_id` (string, required) - client_id of the application
         + `client_secret` (string, required) - client_secret of the application
 
-+ Response 200 (application/hal+json)
++ Response 200 (application/json)
 
 # Group Measurements
 
-This section contains endpoints for the resources related to measurements and their basic properties. A measurement is a key data object to which the most of other API data has a relation. A measurement object has the following properties:
+This section contains endpoints for the resources related to measurements and their basic properties. A measurement is a key data type to which the most of other API data has a relation. A measurement object has the following properties:
 
 * `measurementId` - unique identifier of the measurement
 * `title` - title of the measurement
 * `description` - additional description for the measurement
 * `quantityType` - type of the measured quantity
 * `archived` - determines whether the measurement is archived
-* `first` - date time of the first collected data sample
+* `first` - the date and time of the first collected data sample
 * `rights` - the array of current user access rights for the measurement
 
 The rights used in the Plantyst application are the following:
@@ -83,7 +88,7 @@ Along with the measurements, additional data are sent as the embedded resources 
 * `measurementDataVersion` array of measurement data versions
 
 + Parameters
-    + currentSubscriptionOnly (boolean, `true`) ... Determines whether all measurements or only measurements from the user's current subscription are returned.
+    + currentSubscriptionOnly (boolean, `true`) - Determines whether all measurements or only measurements from the user's current subscription are returned.
 
 + Response 200 (application/hal+json)
     + Attributes
@@ -101,7 +106,7 @@ Along with the measurements, additional data are sent as the embedded resources 
             + (object)
                 + `id` (number) - the data version identifier
                 + `title` (string) - the data type tile
-                + `lastModified` (string) - the date time of the last data modification
+                + `lastModified` (string) - the date and time of the last data modification
         + `resourceList` (array) - the array of _Measurement_ objects
             + (object)
                 + `measurementId` (string)
@@ -321,19 +326,22 @@ Available values are:
 The response for the request contains the copy of the original query, the set of data items and the recipe for the interpretation of the data items (`outputFormat`).
 Each item in the output format defines interpretation of the respective data item.
 For five output format items and two data samples, there will be ten data items in the response. The array may contain the following values:
-* `itemCount` - defines the count of the atomic data items in the aggregation
-* `timeSquareSum` - auxiliary value for the optimized data computations
-* `timeSum` - auxiliary value for the optimized data computations
-* `timeValueSum` - auxiliary value for the optimized data computations
-* `valueSum` - specifies the overal (sum) value of the data item
+* `ItemCount` - defines the count of the atomic data items in the aggregation
+* `TimeSquareSum` - auxiliary value for the optimized data computations
+* `TimeSum` - auxiliary value for the optimized data computations
+* `TimeValueSum` - auxiliary value for the optimized data computations
+* `ValueSum` - specifies the overal (sum) value of the data item
 
-+ Request (application/hal+json)
++ Request (application/json)
+    + Headers
+    
+            Authorization: Bearer
     + Attributes
         + Queries (array)
             + - (object)
                 + `MeasurementId` (number, required) - unique measurement identifier
-                + `From` (number, required) - UTC date time in ISO 8061 format that specifies the lower bound of the data query
-                + `To` (number, required) - UTC date time in ISO 8061 format that specifies the upper bound of the data query
+                + `From` (number, required) - UTC date and time in ISO 8061 format that specifies the lower bound of the data query
+                + `To` (number, required) - UTC date and time in ISO 8061 format that specifies the upper bound of the data query
                 + `View` (string, required) - specifies the requested time series type
                 + `Precision` (number, required) - specifies the number of precision of the returned values
     + Body
@@ -369,7 +377,7 @@ For five output format items and two data samples, there will be ten data items 
                     + `Precision` (number)
                 + `outputFormat` (array) - defines the interpretation for the `data` section
                 + `data` (array) - array of data items
-                + `first` (string) - UTC date time of first returned data item in ISO 8601 format
+                + `first` (string) - UTC date and time of first returned data item in ISO 8601 format
 
     + Body
 
@@ -429,7 +437,7 @@ For five output format items and two data samples, there will be ten data items 
 
 # Group Metadocuments
 
-Resources related to metadocuments in the API. Metadocument is a general term for various types of measurement-related data like annotations, comments, jobs or downtime entries. Metadocument has the following properties:
+Resources related to metadocuments in the API. Metadocument is a general term for various types of measurement-related data like annotations, comments, jobs or downtime entries. Metadocument can be defined for a single time point or for time range. Metadocument has the following properties:
 
 * `Guid` - unique identifier of the metadocument (mandatory)
 * `MeasurementId` - identifier of the measurement to which the metadocument belongs (mandatory)
@@ -438,9 +446,9 @@ Resources related to metadocuments in the API. Metadocument is a general term fo
     * `1` - annotation
     * `2` - job
     * `3` - downtime
-* `LastModified` - date time of the last modification in UTC
-* `From` - start date time in UTC
-* `To`  - end date time in UTC
+* `LastModified` - the date and time of the last modification in UTC
+* `From` - start date and time in UTC
+* `To`  - end date and time in UTC; To can have a value or be null; if To is same as From, then it is a single time point metadocument; if To is greater than From, then it is a time range metadocument; If To is null, then it is unlimited metadocument
 * `Title` - metadocument title
 * `Description` - extended description, enables _MarkDown_ markup language
 * `CustomId` - user-defined identifier
@@ -449,30 +457,26 @@ Resources related to metadocuments in the API. Metadocument is a general term fo
 * `DowntimeCode` - related downtime code identifier
 * `CreatorId` - user identifier of the metadocument creator
 * `Operations` - operations defined as the array of string values
-* `ProductionEntries` - array of information about producted items like entry time, amount, OK or NOT OK items
-* `Users` - array of information about users
+* `ProductionEntries` - embeded array of information about producted items like entry time, amount, OK or NOT OK items
+* `Users` - embeded array of information about users
 * `CustomId` - customer unique identifier
 * `CreatorId` - the identifier of the user who created the metadocument
 * `LastModified` - the last modified date of the metadocument
 * `DowntimeCodeKey` - down time code key
 * `PlannedFrom` - planned from date
 * `PlannedTo` - planned to date
-* `CustomFields` - array of custom fields
-* `Comments` - array of comment objects
+* `CustomFields` - object with custom fields
+* `Comments` - embeded array of comment objects
 
-A metadocument comment is a self-contained object with the following properties:
+A metadocument comment is a self-contained data type with the following properties:
 
 * `Id` - identifier of the comment; unique within the metadocument
 * `Text` - comment text
-* `ModificationTime` - UTC date time of the last modification
+* `ModificationTime` - UTC date and time of the last modification
 
 __Command-based architecture__
 
 All operations over metadocuments that change their state are command-based, therefore the response for such actions is formed as the relative link to the location, where the result of the request should be checked.
-
-___Typical use case___
-
-Comming soon...
 
 ## Add or Patch Metadocument [/Metadocuments/]
 
@@ -480,7 +484,10 @@ Comming soon...
 
 Adds metadocument of given type for the specific measurement.
 
-+ Request
++ Request (application/hal+json)
+    + Headers
+    
+            Authorization: Bearer
     + Attributes
         + `MeasurementId` (number, required)
         + `Type` (number, required)
@@ -500,7 +507,7 @@ Adds metadocument of given type for the specific measurement.
 
 + Response 200 (application/hal+json)
     + Attributes
-        + `location` (string) - specifies the relative url with the result of the requested operation
+        + `location` (string) - specifies the relative URL with the result of the requested operation
 
     + Body
 
@@ -515,7 +522,7 @@ Adds metadocument of given type for the specific measurement.
                 "message":"Authorization has been denied for this request."
             }
 
-+ Response 403  (application/hal+json)
++ Response 403 (application/hal+json)
     + Body
 
             {
@@ -526,7 +533,10 @@ Adds metadocument of given type for the specific measurement.
 
 Updates the metadocument with specific Guid and given parameters.
 
-+ Request
++ Request (application/hal+json)
+    + Headers
+    
+            Authorization: Bearer
     + Attributes
         + `Guid` (string, required)
         + `MeasurementId` (number)
@@ -546,7 +556,7 @@ Updates the metadocument with specific Guid and given parameters.
 
 + Response 200 (application/hal+json)
     + Attributes
-        + `location` (string) - specifies the relative url with the result of the requested operation
+        + `location` (string) - specifies the relative URL with the result of the requested operation
 
     + Body
 
@@ -582,11 +592,11 @@ Updates the metadocument with specific Guid and given parameters.
 Deletes the metadocument with specific Guid.
 
 + Parameters
-    + guid (string, required, `e2dd39dc-5389-43b9-b855-426af762811f`) ... unique identifier for the metadocument
+    + guid (string, required, `e2dd39dc-5389-43b9-b855-426af762811f`) - unique identifier for the metadocument
 
 + Response 200 (application/hal+json)
     + Attributes
-        + `location` (string) - specifies the relative url with the result of the requested operation
+        + `location` (string) - specifies the relative URL with the result of the requested operation
 
     + Body
 
@@ -620,7 +630,7 @@ Deletes the metadocument with specific Guid.
 Gets metadocument with specific Guid with embedded comments.
 
 + Parameters
-    + guid (string, required, `e2dd39dc-5389-43b9-b855-426af762811f`) ... unique identifier for the metadocument
+    + guid (string, required, `e2dd39dc-5389-43b9-b855-426af762811f`) - unique identifier for the metadocument
 
 + Response 200 (application/hal+json)
     + Attributes
@@ -705,9 +715,12 @@ Gets metadocument with specific Guid with embedded comments.
 Adds production entry into metadocument.
 
 + Parameters
-    + guid (string, required, `e2dd39dc-5389-43b9-b855-426af762811f`) ... unique identifier for the metadocument
+    + guid (string, required, `e2dd39dc-5389-43b9-b855-426af762811f`) - unique identifier for the metadocument
 
-+ Request
++ Request (application/hal+json)
+    + Headers
+    
+            Authorization: Bearer
     + Attributes
         + `Value` (number, required)
         + `Type` (string, required)
@@ -716,7 +729,7 @@ Adds production entry into metadocument.
 
 + Response 200 (application/hal+json)
     + Attributes
-        + `location` (string) - specifies the relative url with the result of the requested operation
+        + `location` (string) - specifies the relative URL with the result of the requested operation
 
     + Body
 
@@ -749,7 +762,10 @@ Adds production entry into metadocument.
 
 Updates the production entry with specific Id and given parameters.
 
-+ Request
++ Request (application/hal+json)
+    + Headers
+    
+            Authorization: Bearer
     + Attributes
         + `Id` (number, required)
         + `Value` (number, required)
@@ -759,7 +775,7 @@ Updates the production entry with specific Id and given parameters.
 
 + Response 200 (application/hal+json)
     + Attributes
-        + `location` (string) - specifies the relative url with the result of the requested operation
+        + `location` (string) - specifies the relative URL with the result of the requested operation
 
     + Body
 
@@ -795,6 +811,9 @@ Updates the production entry with specific Id and given parameters.
 Gets the metadocuments for a given measurement and time range.
 
 + Request (application/json)
+    + Headers
+    
+            Authorization: Bearer
     + Attributes
         + Queries (array)
             + - (object)
@@ -816,7 +835,7 @@ Gets the metadocuments for a given measurement and time range.
 + Response 200 (application/hal+json)
     + Attributes
         + `responseContinuation` (string) - continuation token if the returned data are too long for one response; empty if the query is fully satisfied
-        + `dateTime` (string) - UTC date time in ISO 8601 format for which the response is up to date
+        + `dateTime` (string) - UTC date and time in ISO 8601 format for which the response is up to date
         + _links (object)
             + self (object)
                 + href (string, required)
@@ -951,13 +970,13 @@ Gets the metadocuments for a given measurement and time range.
 Gets the metadocument command result.
 
 + Parameters
-    + guid (string, required, `f57513ba-c004-45bc-b28c-610eb00de7c`) ... unique identifier for the metadocument command
+    + guid (string, required, `f57513ba-c004-45bc-b28c-610eb00de7c`) - unique identifier for the metadocument command
 
 + Response 200 (application/hal+json)
     + Attributes
         + `guid` (string) - unique identifier for the metadocument command
         + `result` (string) - text representation of the result
-        + `processedDate` (string) - processed date time of the command in ISO 8601 format
+        + `processedDate` (string) - processed date and time of the command in ISO 8601 format
         + `metadocumentGuid` (string) - specifies identifier for the related metadocument
 
     + Body
@@ -1007,29 +1026,22 @@ Adds comment to the specific metadocument.
 + Parameters
     + guid (string, required) - Specifies the unique identifier for the metadocument.
 
-+ Request
++ Request (application/hal+json)
+    + Headers
+    
+            Authorization: Bearer
     + Attributes
-        + `Id` (number, required)
         + `Text` (string)
-        + `Time` (string)
-        + `UserId` (string)
 
     + Body
 
             {
-                "Queries": [
-                    {
-                        "Id":3,
-                        "Text":"Comment text.",
-                        "Time":"2017-06-01T00:09:00Z",
-                        "UserId":497,
-                    }
-                ]
+                "Text":"Comment text."
             }
 
 + Response 200 (application/hal+json)
     + Attributes
-        + `location` (string) - specifies the relative url with the result of the requested operation
+        + `location` (string) - specifies the relative URL with the result of the requested operation
 
     + Body
 
@@ -1065,15 +1077,24 @@ Updates comment for the specific metadocument.
 + Parameters
     + guid (string, required) - Specifies the unique identifier for the metadocument.
 
-+ Request
++ Request (application/hal+json)
+    + Headers
+    
+            Authorization: Bearer
     + Attributes
         + `Id` (number, required)
         + `Text` (string)
-        + `Time` (string)
+        
+    + Body
+
+            {
+                "Id":12,
+                "Text":"Comment text."
+            }
 
 + Response 200 (application/hal+json)
     + Attributes
-        + `location` (string) - specifies the relative url with the result of the requested operation
+        + `location` (string) - specifies the relative URL with the result of the requested operation
 
     + Body
 
@@ -1109,17 +1130,17 @@ Updates comment for the specific metadocument.
 Deletes comment for the specific metadocument.
 
 + Parameters
-    + guid (string, required) - Specifies the unique identifier for the metadocument.
+    + guid (string, required) - the unique identifier of the metadocument
+    + id (number, required) - the unique identifier of the comment and its version within the metadocument
 
-+ Request
-    + Attributes
-        + `Id` (number, required)
-        + `Text` (string)
-        + `Time` (string)
++ Request (application/hal+json)
+    + Headers
+
+             Authorization: Bearer
 
 + Response 200 (application/hal+json)
     + Attributes
-        + `location` (string) - specifies the relative url with the result of the requested operation
+        + `location` (string) - specifies the relative URL with the result of the requested operation
 
     + Body
 
@@ -1164,9 +1185,12 @@ The content of these CSV file must be MIME multipart content and only single fil
 
 A response object has the following properties:
 
-* `location` (string) - specifies the relative url with the result of the requested operation
+* `location` (string) - specifies the relative URL with the result of the requested operation
 
 + Request (multipart/form-data; boundary=boundary value)
+    + Headers
+    
+            Authorization: Bearer
     + Body
     
             --{boundary value}
