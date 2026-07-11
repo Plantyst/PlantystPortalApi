@@ -174,6 +174,15 @@ tags:
       The shift pauses are expressed as __offsets from the shift start__ in the .NET TimeSpan format `[dd.]hh:mm:ss` - e.g. a pause `{ "from": "04:00:00", "to": "04:15:00" }` of a shift starting at 06:00 UTC runs from 10:00 to 10:15 UTC.
 
       Reading the calendar requires the _View_ right; the management operations require the _DataAdmin_ right and follow the asynchronous command pattern (`202 Accepted` + `location`, see Command Results).
+  - name: Users & Subscriptions
+    description: |
+      Read-only endpoints providing the identity context of the API client.
+
+      __Users__ resolve the user references appearing across the API - `creatorId` of metadocuments, `userId` of comments and production entries, or shift operators. The list and detail endpoints intentionally expose only the identifier and the display name; the full profile is available only for the token owner itself (`/Users/Me`).
+
+      __Subscriptions__ represent the customer accounts the user belongs to. Most collection endpoints (measurements, job types, users) are scoped to the user's __current subscription__.
+
+      The user management itself (creating users, groups and access) is not part of this API - it is handled by the SCIM provisioning interface (see the SCIM chapter) or by the Plantyst Portal administration.
   - name: Command Results
     description: |
       The results of asynchronous commands (e.g. the job types CSV import). A command request responds with `202 Accepted` and a body with the relative URL (`location`) of the command result. Poll the result URL until the `result` reaches one of the final states:
@@ -2303,6 +2312,171 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
   # ---------------------------------------------------------------------------
+  # Users & Subscriptions
+  # ---------------------------------------------------------------------------
+  /Users:
+    get:
+      operationId: getUsers
+      tags: [Users & Subscriptions]
+      summary: Get users
+      description: |
+        Gets the users of the current subscription (identifier and display name only). Use it to resolve the user references returned by other endpoints.
+      responses:
+        "200":
+          description: The users of the current subscription.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+                  _embedded:
+                    type: object
+                    properties:
+                      user:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UserSummary"
+              example:
+                _links:
+                  self:
+                    href: /Api/Users
+                _embedded:
+                  user:
+                    - userId: 101
+                      name: Jan Novák
+                      _links:
+                        self:
+                          href: /Api/Users/101
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /Users/{id}:
+    get:
+      operationId: getUser
+      tags: [Users & Subscriptions]
+      summary: Get user
+      description: Gets the user of the current subscription (identifier and display name only).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The user.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/UserSummary"
+              example:
+                userId: 101
+                name: Jan Novák
+                _links:
+                  self:
+                    href: /Api/Users/101
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /Users/Me:
+    get:
+      operationId: getMe
+      tags: [Users & Subscriptions]
+      summary: Get current user
+      description: Gets the full profile of the user the access token or API key belongs to. Useful for an integration to discover its own `userId`.
+      responses:
+        "200":
+          description: The profile of the token owner.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+              example:
+                userId: 101
+                name: Jan Novák
+                email: jan.novak@example.com
+                language: cs-CZ
+                _links:
+                  self:
+                    href: /Api/Users/101
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /Subscriptions/Current:
+    get:
+      operationId: getCurrentSubscription
+      tags: [Users & Subscriptions]
+      summary: Get current subscription
+      description: |
+        Gets the current subscription of the user - the customer account whose data the collection endpoints (measurements, job types, users) return.
+      responses:
+        "200":
+          description: The current subscription.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/Subscription"
+              example:
+                subscriptionId: 83
+                title: Demo subscription
+                name: Demo subscription
+                isArchived: false
+                _links:
+                  self:
+                    href: /Api/Subscriptions/83
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user has no current subscription, or it is archived.
+
+  /Subscriptions:
+    get:
+      operationId: getSubscriptions
+      tags: [Users & Subscriptions]
+      summary: Get subscriptions
+      description: Gets all subscriptions the user belongs to.
+      responses:
+        "200":
+          description: The subscriptions of the user.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  currentSubscriptionId:
+                    type: [integer, "null"]
+                    description: The identifier of the current subscription; omitted when the user has none.
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+                  _embedded:
+                    type: object
+                    properties:
+                      subscription:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Subscription"
+              example:
+                currentSubscriptionId: 83
+                _links:
+                  self:
+                    href: /Api/Subscriptions
+                _embedded:
+                  subscription:
+                    - subscriptionId: 83
+                      title: Demo subscription
+                      name: Demo subscription
+                      isArchived: false
+                      _links:
+                        self:
+                          href: /Api/Subscriptions/83
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ---------------------------------------------------------------------------
   # Command Results
   # ---------------------------------------------------------------------------
   /commandResults/{id}:
@@ -3494,6 +3668,41 @@ components:
         appliedChanges:
           type: string
           description: "A JSON Patch (RFC 6902) document (as a string) describing the changes applied by the command. The paths use PascalCase property names (e.g. `/To`, `/DowntimeCode`, `/Comments/0`), unlike the camelCase payload. Special shapes: a create event carries a single `replace` of the path `/` with the whole document, a delete event a `replace` of `/` with `null`."
+
+
+    # Internal-only property of /Users/Me, intentionally not documented:
+    # * features - UI feature toggles of the user ({title, configuration, enabledUntil})
+    UserProfile:
+      type: object
+      description: The full profile of the token owner.
+      properties:
+        userId:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+        language:
+          type: [string, "null"]
+          description: The preferred language of the user (e.g. `cs-CZ`).
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+
+    # Internal-only property, intentionally not documented:
+    # * features - enabled subscription modules ({title, configuration, enabledUntil})
+    Subscription:
+      type: object
+      properties:
+        subscriptionId:
+          type: integer
+        title:
+          type: string
+        name:
+          type: string
+        isArchived:
+          type: boolean
+        _links:
+          $ref: "#/components/schemas/HalLinks"
 
   responses:
     Unauthorized:
