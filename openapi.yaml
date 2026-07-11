@@ -230,6 +230,37 @@ tags:
 
       The `appliedChanges` property carries a JSON Patch (RFC 6902) document describing the changes applied by the command - useful for reacting only to specific properties (e.g. a path `/DowntimeCode` means the downtime code changed). Note that the patch paths use PascalCase property names, unlike the camelCase payload.
 
+  - name: SCIM Provisioning
+    description: |
+      A [SCIM 2.0](https://datatracker.ietf.org/doc/html/rfc7644) provisioning interface for identity providers (e.g. Microsoft Entra ID, Okta) and customer IT administrators - creating and deactivating users, managing groups and their membership.
+
+      __Directory__
+
+      The provisioning is bound to a __directory__ - the link between the customer's identity provider tenant and Plantyst. The directory (its `directoryId` in the URL) and a dedicated provisioning credential bound to it are set up on request at [support@plantyst.com](mailto:support@plantyst.com). The credential is a __JWT bearer token__ issued for the directory (the "secret token" pasted into the identity provider's provisioning configuration) - API keys cannot be used for SCIM. Plantyst configures the credential with the directory binding and the security roles required by the endpoints (`Plantyst/User/Read`, `Plantyst/User/Write`, `Plantyst/Group/Read`, `Plantyst/Group/Write`); a token without the roles is rejected with `401`, a token bound to a different directory with `403 Forbidden`.
+
+      __Users and groups__
+
+      * A SCIM user maps to a Plantyst user: `userName` = e-mail (login), `displayName` = name, `locale` = language. The SCIM `id` equals the `userId` used elsewhere in the API. Deleting a user deactivates it (the account is kept for historical references).
+      * A SCIM group maps to a Plantyst __group__ - the primary organizational structure of the customer account. Groups can be nested into a hierarchy (see the `parentGroupDisplayName` extension below), and the group hierarchy can then serve as the hierarchy for measurements - elsewhere in the API it appears as `hierarchicalLocations` and the `groupId` filter of `/Measurements`. A created group becomes a child of the directory root group, or of the group named by `parentGroupDisplayName`. __Group membership controls the access of the users to the measurements under the group.__
+
+      __Plantyst SCIM extensions__
+
+      Both resource types carry Plantyst-specific properties defined in extension namespaces:
+
+      * `urn:ietf:params:scim:schemas:extension:plantyst:1.0:User`
+        * `Role` - the Plantyst role of the user (read-only)
+        * `ManagedType` - `Managed` (the user is managed by this directory) or `Unmanaged` (an account of the customer outside the directory); read-only, see the `filterManagedType` query parameter
+        * note: both properties are serialized in PascalCase
+      * `urn:ietf:params:scim:schemas:extension:plantyst:1.0:Group`
+        * `parentGroupDisplayName` - the display name of the parent group; builds the group hierarchy. It can also be changed with a `PATCH` operation to move the group under a different parent (the parent must exist in the directory).
+        * `shortName` - a short label of the group. The `displayName` must be unique (and therefore tends to be long); where space matters - typically in hierarchical path displays showing the whole chain of groups - the `shortName` is displayed instead. When not set, the `displayName` is used.
+
+      __Protocol notes__
+
+      * Requests and responses use `application/scim+json` (plain `application/json` is accepted as well).
+      * Updates use the SCIM `PatchOp` message; `PUT` replacement is not supported (`501 Not Implemented`).
+      * The discovery endpoints (`/ServiceProviderConfig`, `/Schemas`, `/ResourceTypes`) are not implemented.
+
 paths:
   /OAuth/Authorize:
     get:
@@ -2538,6 +2569,341 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+  # ---------------------------------------------------------------------------
+  # SCIM Provisioning
+  # ---------------------------------------------------------------------------
+  /Directory/{directoryId}/Scim/v2/Users:
+    parameters:
+      - $ref: "#/components/parameters/ScimDirectoryId"
+    get:
+      operationId: scimQueryUsers
+      tags: [SCIM Provisioning]
+      summary: Query users (SCIM)
+      description: |
+        Returns the users of the directory as a SCIM `ListResponse`. By default only the users managed by the directory are returned; with `filterManagedType=all` the unmanaged users of the customer account are included as well (with `ManagedType: Unmanaged`).
+      parameters:
+        - name: filter
+          in: query
+          required: false
+          schema:
+            type: string
+          example: userName eq "jan.novak@example.com"
+          description: "A SCIM filter expression. Supported attributes: `userName`, `displayName`, `locale`, `name.givenName`, `name.familyName`, `active`; unsupported attributes are ignored."
+        - name: filterManagedType
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all]
+          description: When set to `all`, users not managed by this directory are included in the result.
+      responses:
+        "200":
+          description: The SCIM list response with the matching users.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimListResponse"
+              example:
+                schemas: ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
+                totalResults: 1
+                itemsPerPage: 1
+                startIndex: 1
+                Resources:
+                  - schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"]
+                    id: "101"
+                    userName: jan.novak@example.com
+                    displayName: Jan Novák
+                    active: true
+                    ManagedType: Managed
+        "400":
+          description: The filter expression is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The credential is not bound to the directory given in the URL.
+    post:
+      operationId: scimCreateUser
+      tags: [SCIM Provisioning]
+      summary: Create user (SCIM)
+      description: |
+        Creates a user in the directory. The `userName` becomes the e-mail (and login) of the Plantyst user; `locale` sets the user language (the directory default is used when omitted).
+
+        The domain of the `userName` e-mail must be one of the domains registered for the directory (agreed during the directory setup) - other domains are rejected with `400 Bad Request`.
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/ScimUser"
+            example:
+              schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"]
+              userName: jan.novak@example.com
+              displayName: Jan Novák
+              name:
+                givenName: Jan
+                familyName: Novák
+              locale: cs-CZ
+              active: true
+      responses:
+        "201":
+          description: The created user, including its `id`.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimUser"
+        "400":
+          description: The payload is invalid, or the `userName` domain is not registered for the directory.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The credential is not bound to the directory given in the URL.
+        "409":
+          description: A user with the given `userName` already exists.
+
+  /Directory/{directoryId}/Scim/v2/Users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ScimDirectoryId"
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: The SCIM user identifier (equals the Plantyst `userId`).
+    get:
+      operationId: scimGetUser
+      tags: [SCIM Provisioning]
+      summary: Get user (SCIM)
+      responses:
+        "200":
+          description: The SCIM user.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The credential is not bound to the directory given in the URL.
+        "404":
+          description: The user does not exist in the directory.
+    patch:
+      operationId: scimPatchUser
+      tags: [SCIM Provisioning]
+      summary: Update user (SCIM PatchOp)
+      description: |
+        Applies a SCIM `PatchOp` document to the user (`add`, `replace` and `remove` operations on the user attributes; deactivate a user by setting `active` to `false`).
+
+        `PUT` replacement is not supported (`501 Not Implemented`) - use `PATCH`.
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/ScimPatchOp"
+            example:
+              schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"]
+              Operations:
+                - op: replace
+                  path: displayName
+                  value: Jan Novák ml.
+      responses:
+        "200":
+          description: The updated SCIM user.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimUser"
+        "400":
+          description: The patch document is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The credential is not bound to the directory given in the URL.
+        "404":
+          description: The user does not exist in the directory.
+    delete:
+      operationId: scimDeleteUser
+      tags: [SCIM Provisioning]
+      summary: Deactivate user (SCIM)
+      description: Deactivates the user. The Plantyst account is kept for historical references (`creatorId`, comment authors, ...), but can no longer sign in and is no longer returned by the SCIM endpoints (`404`).
+      responses:
+        "204":
+          description: The user was deactivated.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The credential is not bound to the directory given in the URL.
+        "404":
+          description: The user does not exist in the directory.
+
+  /Directory/{directoryId}/Scim/v2/Groups:
+    parameters:
+      - $ref: "#/components/parameters/ScimDirectoryId"
+    get:
+      operationId: scimQueryGroups
+      tags: [SCIM Provisioning]
+      summary: Query groups (SCIM)
+      description: |
+        Returns the groups under the directory root as a SCIM `ListResponse` - the same groups that form the measurement hierarchy elsewhere in the API.
+      parameters:
+        - name: filter
+          in: query
+          required: false
+          schema:
+            type: string
+          example: displayName eq "Hall A"
+          description: "A SCIM filter expression. Supported attributes: `displayName`, `shortName`; unsupported attributes are ignored."
+        - name: excludedAttributes
+          in: query
+          required: false
+          schema:
+            type: string
+          example: members
+          description: Comma-separated attribute names to omit from the result (e.g. `members`).
+      responses:
+        "200":
+          description: The SCIM list response with the matching groups.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimListResponse"
+        "400":
+          description: The filter expression is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The credential is not bound to the directory given in the URL.
+    post:
+      operationId: scimCreateGroup
+      tags: [SCIM Provisioning]
+      summary: Create group (SCIM)
+      description: |
+        Creates a group as a child of the directory root group, or of the group named by `parentGroupDisplayName` - extending the group hierarchy.
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/ScimGroup"
+            example:
+              schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group", "urn:ietf:params:scim:schemas:extension:plantyst:1.0:Group"]
+              displayName: Line 1 (Hall A)
+              shortName: Line 1
+              parentGroupDisplayName: Hall A
+              members:
+                - value: "101"
+      responses:
+        "201":
+          description: The created group, including its `id`.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimGroup"
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The credential is not bound to the directory given in the URL.
+        "404":
+          description: The group named by `parentGroupDisplayName` does not exist in the directory.
+        "409":
+          description: A group with the given `displayName` already exists.
+
+  /Directory/{directoryId}/Scim/v2/Groups/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ScimDirectoryId"
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: The SCIM group identifier (equals the group identifier used elsewhere in the API, e.g. `groupId` of `/Measurements`).
+    get:
+      operationId: scimGetGroup
+      tags: [SCIM Provisioning]
+      summary: Get group (SCIM)
+      parameters:
+        - name: excludedAttributes
+          in: query
+          required: false
+          schema:
+            type: string
+          example: members
+          description: Comma-separated attribute names to omit from the result.
+      responses:
+        "200":
+          description: The SCIM group.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimGroup"
+              example:
+                schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"]
+                id: "51"
+                displayName: Hall A
+                shortName: A
+                members:
+                  - value: "101"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The credential is not bound to the directory given in the URL.
+        "404":
+          description: The group does not exist - or the lookup of an existing group failed on a missing group-directory link (a known server-side issue affecting individual group retrieval and updates; the query, create and delete endpoints are not affected). Use the query endpoint with a `displayName` filter as a workaround.
+    patch:
+      operationId: scimPatchGroup
+      tags: [SCIM Provisioning]
+      summary: Update group (SCIM PatchOp)
+      description: |
+        Applies a SCIM `PatchOp` document to the group - typically `add` and `remove` operations on `members` (membership changes control the access of the users to the measurements under the group), a `replace` of `displayName`, or a `replace` of `parentGroupDisplayName` to move the group under a different parent in the hierarchy.
+
+        `PUT` replacement is not supported (`501 Not Implemented`) - use `PATCH`.
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/ScimPatchOp"
+            example:
+              schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"]
+              Operations:
+                - op: add
+                  path: members
+                  value:
+                    - value: "101"
+      responses:
+        "200":
+          description: The updated SCIM group.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/ScimGroup"
+        "400":
+          description: The patch document is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The credential is not bound to the directory given in the URL.
+        "404":
+          description: The group does not exist in the directory.
+    delete:
+      operationId: scimDeleteGroup
+      tags: [SCIM Provisioning]
+      summary: Delete group (SCIM)
+      description: Deletes the group. Only empty leaf groups can be deleted - a group with child groups or content, and the groups representing the subscription or the directory itself, are rejected.
+      responses:
+        "204":
+          description: The group was deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The credential is not bound to the directory given in the URL.
+        "404":
+          description: The group does not exist in the directory.
+        "409":
+          description: The group cannot be deleted - it has child groups (only leaf groups can be deleted; verified), or it represents the subscription or the directory.
+
 webhooks:
   metadocumentEvent:
     post:
@@ -2617,6 +2983,14 @@ components:
       description: The API key passed in the query string. Useful for quick tests, but avoid it in production integrations because URLs tend to end up in logs.
 
   parameters:
+    ScimDirectoryId:
+      name: directoryId
+      in: path
+      required: true
+      schema:
+        type: integer
+      description: The identifier of the directory, assigned by Plantyst during the provisioning setup.
+
     CommandCustomId:
       name: commandCustomId
       in: query
@@ -3703,6 +4077,146 @@ components:
           type: boolean
         _links:
           $ref: "#/components/schemas/HalLinks"
+
+
+    ScimMeta:
+      type: object
+      properties:
+        created:
+          type: [string, "null"]
+          format: date-time
+        lastModified:
+          type: [string, "null"]
+          format: date-time
+
+    ScimUser:
+      type: object
+      description: A SCIM 2.0 user. The `Role` and `ManagedType` properties are Plantyst extensions (note their PascalCase names). Unlike the HAL endpoints, the SCIM responses include properties with `null` values.
+      required: [userName]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          description: Always `["urn:ietf:params:scim:schemas:core:2.0:User"]`.
+        id:
+          type: string
+          description: The SCIM identifier; equals the Plantyst `userId`. Assigned by the server.
+        userName:
+          type: string
+          description: The e-mail (login) of the user.
+        displayName:
+          type: string
+        name:
+          type: object
+          properties:
+            givenName:
+              type: string
+            familyName:
+              type: string
+        locale:
+          type: [string, "null"]
+          description: "The language of the user; supported values: `en-US`, `cs-CZ`, `en-GB` (case-insensitive; other values are rejected). When omitted on create, the directory default is used."
+        phoneNumbers:
+          type: array
+          items:
+            type: object
+            properties:
+              primary:
+                type: boolean
+              type:
+                type: string
+              value:
+                type: string
+        active:
+          type: boolean
+          description: Setting `active` to `false` deactivates the user.
+        Role:
+          type: [string, "null"]
+          description: Plantyst extension - the Plantyst role of the user. Read-only. Note the PascalCase name.
+        ManagedType:
+          type: string
+          enum: [Managed, Unmanaged]
+          description: Plantyst extension - whether the user is managed by this directory. Read-only. Note the PascalCase name.
+        meta:
+          $ref: "#/components/schemas/ScimMeta"
+
+    ScimGroup:
+      type: object
+      description: A SCIM 2.0 group, mapping to a Plantyst group - the primary organizational structure. The group hierarchy (built with `parentGroupDisplayName`) can serve as the hierarchy for measurements (see the group description). The `shortName` and `parentGroupDisplayName` properties are Plantyst extensions (`urn:ietf:params:scim:schemas:extension:plantyst:1.0:Group`).
+      required: [displayName]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          description: "`urn:ietf:params:scim:schemas:core:2.0:Group` and the Plantyst extension `urn:ietf:params:scim:schemas:extension:plantyst:1.0:Group`."
+        id:
+          type: string
+          description: The SCIM identifier; equals the group identifier used elsewhere in the API (`groupId`, `hierarchicalLocationId`). Assigned by the server.
+        displayName:
+          type: string
+        members:
+          type: array
+          items:
+            type: object
+            properties:
+              value:
+                type: string
+                description: The SCIM user identifier of the member.
+        shortName:
+          type: [string, "null"]
+          description: Plantyst extension - a short label of the group. The `displayName` must be unique and therefore tends to be long; `shortName` is used instead of it where space matters (e.g. in hierarchical path displays showing the whole chain of groups). When not set, the `displayName` is used.
+        parentGroupDisplayName:
+          type: [string, "null"]
+          description: Plantyst extension - the display name of the parent group (it must exist in the directory); when omitted on create, the group is created under the directory root group. Change it with a PATCH operation to move the group under a different parent.
+        meta:
+          $ref: "#/components/schemas/ScimMeta"
+
+    ScimListResponse:
+      type: object
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          description: Always `["urn:ietf:params:scim:api:messages:2.0:ListResponse"]`.
+        totalResults:
+          type: integer
+        itemsPerPage:
+          type: integer
+        startIndex:
+          type: integer
+        Resources:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/ScimUser"
+              - $ref: "#/components/schemas/ScimGroup"
+
+    ScimPatchOp:
+      type: object
+      description: A SCIM 2.0 PatchOp message.
+      required: [Operations]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          description: Always `["urn:ietf:params:scim:api:messages:2.0:PatchOp"]`.
+        Operations:
+          type: array
+          items:
+            type: object
+            required: [op]
+            properties:
+              op:
+                type: string
+                enum: [add, replace, remove]
+              path:
+                type: string
+              value:
+                description: The value of the operation (any JSON value).
 
   responses:
     Unauthorized:
