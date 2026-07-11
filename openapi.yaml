@@ -195,6 +195,32 @@ tags:
 
       __Note:__ The API currently has no endpoint for listing the configured generation rules. The `OriginGuids` value can be tracked by the integration itself: the guid of the add or update command (the last segment of the returned `location` URL) becomes the `commandGuid` of the rule. The `ProductionAlarmTriggerIds` are however not exposed by the API at all - they are available only in the Portal settings (Settings - Downtimes - Automatic downtimes generating). A command with a stale `OriginGuids` value finishes with the `Conflict` result.
 
+  - name: Webhooks
+    description: |
+      Plantyst can notify an integration about metadocument changes by calling a registered HTTP callback URL (a webhook). Webhooks are set up on request at [support@plantyst.com](mailto:support@plantyst.com) - provide the callback URL and agree on the optional `configuration` value echoed with every delivery. The webhook fires for every metadocument change on all measurements accessible to the integration user; there is currently no self-service management API.
+
+      __Events__
+
+      * `MetadocumentCreate` - a metadocument was created
+      * `MetadocumentUpdate` - a metadocument was updated (including changes of its comments and production entries)
+      * `MetadocumentDelete` - a metadocument was deleted
+
+      __Delivery and acknowledgement__
+
+      The delivery is a `POST` request with an `application/json` body (see the webhook definition below). Acknowledge it with any `2xx` status code; other status codes and unreachable URLs cause several redelivery attempts before the delivery is dropped. Deliveries may occasionally arrive out of order or repeatedly - use `data.lastModified` and `data.eTag` to decide whether the payload is newer than your state.
+
+      __Security and the recommended integration pattern__
+
+      The delivery is not signed. Treat the payload as a notification and verify anything important by reading the current state through the REST API - the `authorization` object in the body carries a short-lived (1 hour) credential for that: use `authorization.value` as the `Authorization: Bearer {value}` header (or as an API key when `authorizationType` is `ApiKey`). Because the payload contains this credential, treat the whole request body as a secret.
+
+      __Detecting own changes__
+
+      The `commandGuid` of the event equals the command identifier returned to the API caller in the command `location` URL. An integration that also writes through the API can compare it with its own issued commands and skip the echo of its own changes.
+
+      __What changed__
+
+      The `appliedChanges` property carries a JSON Patch (RFC 6902) document describing the changes applied by the command - useful for reacting only to specific properties (e.g. a path `/DowntimeCode` means the downtime code changed). Note that the patch paths use PascalCase property names, unlike the camelCase payload.
+
 paths:
   /OAuth/Authorize:
     get:
@@ -2338,6 +2364,58 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+webhooks:
+  metadocumentEvent:
+    post:
+      operationId: metadocumentEventWebhook
+      tags: [Webhooks]
+      summary: Metadocument changed
+      description: |
+        Plantyst calls the registered callback URL with a `POST` request whenever a metadocument is created, updated or deleted on a measurement accessible to the integration. Changes of comments and production entries are delivered as `MetadocumentUpdate` events carrying the whole document.
+
+        The event is sent only after the change command finishes successfully (the `Success` command result).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+            example:
+              id: 0be9e2c6-6c53-4de1-8c39-0f2c81a4d7aa
+              eventType: MetadocumentUpdate
+              timestamp: 1783861200
+              commandGuid: 21ef10c1-768b-48dc-b7a3-fd0e0a6e1102
+              data:
+                guid: 27a858a0-c244-4640-83f8-513dbc70c2e6
+                measurementId: 3
+                type: 3
+                from: "2026-07-01T05:30:00Z"
+                to: "2026-07-01T07:30:00Z"
+                creatorId: 497
+                color: "#969614"
+                downtimeCodeKey: "144"
+                downtimeCode:
+                  code: "1.2"
+                  title: Tool change
+                eTag: "\"2f007274-0000-0d00-0000-6a4e18d80000\""
+                lastModified: "2026-07-01T07:30:05Z"
+                comments:
+                  - id: 1
+                    userId: 497
+                    modificationTime: "2026-07-01T07:00:12Z"
+                    text: Comment text
+                customFields:
+                  SourceId: ext-123
+              configuration:
+                Measurements: [3]
+              authorization:
+                authorizationType: Token
+                value: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
+              appliedChanges: "[{\"op\":\"replace\",\"path\":\"/DowntimeCode\",\"value\":\"144\"}]"
+      responses:
+        "2XX":
+          description: Return any `2xx` status code to acknowledge the delivery. Any other status code (or an unreachable URL) causes the delivery to be retried several times before it is dropped.
+
 components:
   securitySchemes:
     oauth2:
@@ -3289,6 +3367,133 @@ components:
         UserId:
           type: integer
           description: The identifier of the operator (user).
+
+
+    WebhookAuthorization:
+      type: object
+      description: A short-lived credential (valid for 1 hour) for calling the REST API as the integration user.
+      properties:
+        authorizationType:
+          type: string
+          enum: [Token, ApiKey]
+          description: "`Token` - use the value as a bearer token; `ApiKey` - use the value as an API key."
+        value:
+          type: string
+
+    WebhookComment:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: [integer, "null"]
+        modificationTime:
+          type: string
+          format: date-time
+        text:
+          type: string
+
+    WebhookProductionEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: [integer, "null"]
+        time:
+          type: string
+          format: date-time
+        value:
+          type: number
+        type:
+          type: string
+        note:
+          type: [string, "null"]
+
+    # Internal-only properties observed in webhook payloads, intentionally not
+    # documented: maximalLength (seconds, derived from the downtime code),
+    # nextCommentId, nextProductionEntryId (internal counters).
+    WebhookMetadocument:
+      type: object
+      description: The metadocument carried by the webhook. All metadocument properties (see the Metadocuments group) are present in camelCase; properties with `null` or empty values are omitted. Unlike the REST representation, the related records are inlined (no `_links`/`_embedded`).
+      additionalProperties: true
+      properties:
+        deleted:
+          type: boolean
+          description: Present with the value `true` on `MetadocumentDelete` events.
+        guid:
+          type: string
+          format: uuid
+        measurementId:
+          type: integer
+        type:
+          type: integer
+          enum: [0, 1, 2, 3]
+          description: "The metadocument type: 0 = general, 1 = annotation, 2 = job, 3 = downtime."
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        eTag:
+          type: string
+        lastModified:
+          type: string
+          format: date-time
+        color:
+          type: [string, "null"]
+          description: Color in the hex color code.
+        downtimeCodeKey:
+          type: [string, "null"]
+          description: The key of the assigned downtime code.
+        downtimeCode:
+          type: [object, "null"]
+          description: The assigned downtime code resolved from the dictionary. Note that unlike the REST representation (where `downtimeCode` is a string with the key), the webhook carries an object with the human-readable code and its description.
+          properties:
+            code:
+              type: string
+            title:
+              type: string
+        comments:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookComment"
+        productionEntries:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookProductionEntry"
+        customFields:
+          type: object
+          additionalProperties: true
+
+    WebhookEvent:
+      type: object
+      description: The body of a webhook delivery. Properties with `null` values are omitted.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier of this delivery.
+        eventType:
+          type: string
+          enum: [MetadocumentCreate, MetadocumentUpdate, MetadocumentDelete]
+        timestamp:
+          type: integer
+          description: Unix timestamp (in seconds) when the event was raised.
+        commandGuid:
+          type: string
+          format: uuid
+          description: The identifier of the command that caused the change; equals the command identifier from the `location` URL returned to the API caller.
+        data:
+          $ref: "#/components/schemas/WebhookMetadocument"
+        configuration:
+          description: The per-integration configuration agreed during the webhook setup, echoed with every delivery (any JSON value; omitted when not configured).
+        authorization:
+          $ref: "#/components/schemas/WebhookAuthorization"
+        appliedChanges:
+          type: string
+          description: "A JSON Patch (RFC 6902) document (as a string) describing the changes applied by the command. The paths use PascalCase property names (e.g. `/To`, `/DowntimeCode`, `/Comments/0`), unlike the camelCase payload. Special shapes: a create event carries a single `replace` of the path `/` with the whole document, a delete event a `replace` of `/` with `null`."
 
   responses:
     Unauthorized:
