@@ -115,6 +115,25 @@ tags:
       __Access rights__
 
       Reading metadocuments requires the _View_ right; creating, updating and deleting requires the _Contributor_ right. Metadocuments marked `readOnly` and properties locked by another user (`locks`) cannot be modified; users with the _Admin_ right bypass the locks. Comments can be updated only by their author; deleting another user's comment requires the _Admin_ right.
+  - name: Downtime Codes
+    description: |
+      The downtime code dictionary classifies downtimes by their cause. Every measurement has its own list of codes; a downtime metadocument references a code through its `key` (the `DowntimeCodeKey` property, see Metadocuments).
+
+      The meaning of the code properties:
+
+      * `key` - server-assigned identifier of the code, referenced by downtime metadocuments; stable for the whole lifetime of the code
+      * `code` - short human-readable code displayed in the UI (format `^([a-zA-Z0-9]+\.?)+$`, at most 10 characters)
+      * `title` - the description of the cause; the UI displays it for every downtime classified with the code
+      * `canBeSelected` - whether operators can select the code manually
+      * `validTo` - soft-delete timestamp; `null` for active codes (deleted codes stay in the dictionary because historical downtimes may reference them)
+      * `commandGuid` - the identifier of the command that created or last changed the code; every change assigns a new value. It is used as `OriginGuids` when updating, deleting or restoring codes - always re-read the dictionary before a subsequent change.
+      * `isBreakdown` - the code marks a breakdown
+      * `isCommentRequired` - operators must add a comment when using the code
+      * `isTransferable`, `isShiftPauseTransferable` - the downtime is transferred to the next shift / over shift pauses
+      * `isReducingPlannedTime`, `isReducingProduction`, `isReducingProductionTime` - how the downtime affects the OEE computation (planned time / production / production time reduction)
+      * `maxLength` - the maximal length of the downtime in seconds; a longer downtime is automatically split
+
+      Reading the dictionary requires the _View_ right; the management commands require the _Admin_ right and follow the asynchronous command pattern (`202 Accepted` + `location`, see Command Results).
   - name: Job Types
     description: |
       Job types represent the plan of production jobs (work orders) prepared for the measurements - the list of jobs ready to run. Operators pick jobs from this list on the shop floor; a started job is then represented as a job metadocument (see Metadocuments).
@@ -151,6 +170,16 @@ tags:
       * `Conflict` / `Failed` / `AlreadyApplied` - other final states (see the Metadocuments group description)
 
       Note: metadocument commands use their own result resource, `/MetadocumentCommandResults`.
+
+  - name: Automatic Downtime Generation
+    description: |
+      Configuration of the automatic inactivity detection: when the machine produces nothing for longer than the configured minimum stop length, a downtime metadocument is created automatically for the measurement. Each __generation rule__ defines the minimum stop length for one measurement.
+
+      The management commands require the _Admin_ right and follow the asynchronous command pattern (`202 Accepted` + `location`, see Command Results).
+
+      __Naming note:__ The endpoint URLs and property names keep the historical name "downtime alarm" (`/DowntimeAlarm*Commands`, `ProductionAlarmTriggerIds`); it denotes the same concept as the automatic downtime generation.
+
+      __Note:__ The API currently has no endpoint for listing the configured generation rules. The `OriginGuids` value can be tracked by the integration itself: the guid of the add or update command (the last segment of the returned `location` URL) becomes the `commandGuid` of the rule. The `ProductionAlarmTriggerIds` are however not exposed by the API at all - they are available only in the Portal settings (Settings - Downtimes - Automatic downtimes generating). A command with a stale `OriginGuids` value finishes with the `Conflict` result.
 
 paths:
   /OAuth/Authorize:
@@ -1237,6 +1266,477 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   # ---------------------------------------------------------------------------
+  # Downtime Codes
+  # ---------------------------------------------------------------------------
+  /DowntimeDictionary:
+    get:
+      operationId: getDowntimeDictionary
+      tags: [Downtime Codes]
+      summary: Get downtime code dictionary
+      description: |
+        Gets the downtime code dictionary for the given set of measurements. The response embeds two collections:
+
+        * `downtimeCode` - the downtime codes themselves
+        * `measurementDowntimeCode` - the mapping of measurements to their downtime codes (as links)
+
+        Deleted codes are included with a non-null `validTo`; treat them as historical (they may still be referenced by past downtimes).
+
+        Required access right: _View_ (for all queried measurements, otherwise `403 Forbidden`).
+      parameters:
+        - name: ids
+          in: query
+          required: true
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: integer
+          description: The measurement identifiers (repeat the parameter for multiple measurements, e.g. `?ids=3&ids=4`).
+        - name: culture
+          in: query
+          required: true
+          schema:
+            type: string
+          example: en-US
+          description: The culture identifier (e.g. `en-US`). Reserved for future localization of the dictionary; currently it does not affect the response content. Always provide it - requests without `culture` are served by a legacy variant of the endpoint with a different, obsolete response shape.
+      responses:
+        "200":
+          description: The downtime code dictionary.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+                  _embedded:
+                    type: object
+                    properties:
+                      downtimeCode:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/DowntimeCode"
+                      measurementDowntimeCode:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            measurementId:
+                              type: integer
+                            _links:
+                              $ref: "#/components/schemas/HalLinks"
+              example:
+                _links:
+                  self:
+                    href: /Api/DowntimeDictionary
+                _embedded:
+                  downtimeCode:
+                    - downtimeCodeId: 9561
+                      key: "144"
+                      code: "1.2"
+                      title: Tool change
+                      color: "#E67E22"
+                      commandGuid: bbf8dc05-0735-43b3-a2fb-6406bda5097f
+                      canBeSelected: true
+                      isCommentRequired: true
+                      maxLength: 3600
+                      _links:
+                        self:
+                          href: /Api/DowntimeCode/9561
+                    - downtimeCodeId: 9562
+                      key: "145"
+                      code: "2"
+                      title: Breakdown
+                      isBreakdown: true
+                      validTo: "2025-06-05T08:27:27.547Z"
+                      commandGuid: c1f8dc05-0735-43b3-a2fb-6406bda5097f
+                      canBeSelected: false
+                      _links:
+                        self:
+                          href: /Api/DowntimeCode/9562
+                  measurementDowntimeCode:
+                    - measurementId: 3
+                      _links:
+                        self:
+                          href: /Api/Measurement/3/DowntimeCodes
+                        downtimeCode:
+                          - href: /Api/DowntimeCode/9561
+                          - href: /Api/DowntimeCode/9562
+        "400":
+          description: The `ids` parameter is missing.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /DowntimeCodeAddCommands:
+    post:
+      operationId: addDowntimeCode
+      tags: [Downtime Codes]
+      summary: Add downtime code
+      description: |
+        Creates a new downtime code on the given measurements.
+
+        Required access right: _Admin_ (for all listed measurements).
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - type: object
+                  required: [MeasurementIds]
+                  properties:
+                    MeasurementIds:
+                      type: array
+                      items:
+                        type: integer
+                      description: The measurements on which the code is created.
+                - $ref: "#/components/schemas/DowntimeCodeWrite"
+            example:
+              MeasurementIds: [3, 4]
+              Code: "1.2"
+              Title: Tool change
+              Color: "#E67E22"
+              CanBeSelected: true
+              IsCommentRequired: true
+              MaxLength: 3600
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The payload is invalid (`Code` and `Title` are required; `Code` must match `^([a-zA-Z0-9]+\.?)+$` and be at most 10 characters long).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /DowntimeCodeUpdateCommands:
+    post:
+      operationId: updateDowntimeCode
+      tags: [Downtime Codes]
+      summary: Update downtime code
+      description: |
+        Updates the downtime code identified by `OriginGuids` and `DowntimeCodeIds`. Only the provided properties are changed - omitted optional properties keep their current values (`Code` and `Title` are required even when unchanged).
+
+        Required access right: _Admin_.
+
+        __Note:__ Every change of a code assigns it a new `commandGuid`. Re-read the dictionary to get the current `commandGuid` (used as `OriginGuids`) before a subsequent update, delete or restore; a command with a stale `OriginGuids` value finishes with the `Conflict` result.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - type: object
+                  required: [OriginGuids, DowntimeCodeIds]
+                  properties:
+                    OriginGuids:
+                      type: array
+                      items:
+                        type: string
+                        format: uuid
+                      description: The current `commandGuid` values of the codes to update (see the dictionary).
+                    DowntimeCodeIds:
+                      type: array
+                      items:
+                        type: integer
+                      description: The `downtimeCodeId` values of the codes to update.
+                - $ref: "#/components/schemas/DowntimeCodeWrite"
+            example:
+              OriginGuids: [bbf8dc05-0735-43b3-a2fb-6406bda5097f]
+              DowntimeCodeIds: [9561]
+              Code: "1.2"
+              Title: Tool change (updated)
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The payload is invalid (`Code` and `Title` are required even when unchanged).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /DowntimeCodeDeleteCommands:
+    post:
+      operationId: deleteDowntimeCode
+      tags: [Downtime Codes]
+      summary: Delete downtime code
+      description: |
+        Deletes (deactivates) the downtime codes identified by `OriginGuids` and `DowntimeCodeIds`. The delete is a soft delete - the code gets a `validTo` timestamp and stays in the dictionary for historical downtimes. It can be restored later.
+
+        Required access right: _Admin_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [OriginGuids, DowntimeCodeIds]
+              properties:
+                OriginGuids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: The current `commandGuid` values of the codes to delete.
+                DowntimeCodeIds:
+                  type: array
+                  items:
+                    type: integer
+            example:
+              OriginGuids: [bbf8dc05-0735-43b3-a2fb-6406bda5097f]
+              DowntimeCodeIds: [9561]
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /DowntimeCodeRestoreCommands:
+    post:
+      operationId: restoreDowntimeCode
+      tags: [Downtime Codes]
+      summary: Restore downtime code
+      description: |
+        Restores previously deleted downtime codes (clears their `validTo`).
+
+        Required access right: _Admin_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementIds, OriginGuids, DowntimeCodeIds]
+              properties:
+                MeasurementIds:
+                  type: array
+                  items:
+                    type: integer
+                OriginGuids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: The current `commandGuid` values of the codes to restore.
+                DowntimeCodeIds:
+                  type: array
+                  items:
+                    type: integer
+            example:
+              MeasurementIds: [3]
+              OriginGuids: [bbf8dc05-0735-43b3-a2fb-6406bda5097f]
+              DowntimeCodeIds: [9561]
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /DowntimeCodeCopyCommands:
+    post:
+      operationId: copyDowntimeCodes
+      tags: [Downtime Codes]
+      summary: Copy downtime codes between measurements
+      description: |
+        Copies downtime codes from the origin measurement to the target measurements. The `CopyAction` determines the behavior:
+
+        * `CopyAll` - copies all selected codes of the origin measurement
+        * `Merge` - adds only the codes missing on the target measurements (matched by `code`)
+        * `Overwrite` - copies the codes and overwrites the conflicting ones on the target measurements
+
+        Required access right: _Admin_ (for the target measurements).
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementIds, OriginMeasurementId, CopyAction, OriginMeasurementGuids]
+              properties:
+                MeasurementIds:
+                  type: array
+                  items:
+                    type: integer
+                  description: The target measurements.
+                OriginMeasurementId:
+                  type: integer
+                  description: The measurement to copy the codes from.
+                CopyAction:
+                  type: string
+                  enum: [CopyAll, Merge, Overwrite]
+                OriginMeasurementGuids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: The `commandGuid` values of the origin measurement codes to copy.
+            example:
+              MeasurementIds: [4, 5]
+              OriginMeasurementId: 3
+              CopyAction: Merge
+              OriginMeasurementGuids: [bbf8dc05-0735-43b3-a2fb-6406bda5097f]
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
+  # Automatic Downtime Generation (historical name: downtime alarms)
+  # ---------------------------------------------------------------------------
+  /DowntimeAlarmAddCommands:
+    post:
+      operationId: addDowntimeAlarm
+      tags: [Automatic Downtime Generation]
+      summary: Enable automatic downtime generation
+      description: |
+        Enables the automatic downtime generation on the given measurements - creates a generation rule with the specified minimum stop length.
+
+        Required access right: _Admin_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementIds, TimeSpan]
+              properties:
+                MeasurementIds:
+                  type: array
+                  items:
+                    type: integer
+                TimeSpan:
+                  type: string
+                  description: The minimum stop length that triggers the automatic downtime creation, in the `hh:mm:ss` format.
+            example:
+              MeasurementIds: [3]
+              TimeSpan: "00:05:00"
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /DowntimeAlarmUpdateCommands:
+    post:
+      operationId: updateDowntimeAlarm
+      tags: [Automatic Downtime Generation]
+      summary: Update automatic downtime generation rule
+      description: |
+        Updates the minimum stop length of the generation rules identified by `OriginGuids` and `ProductionAlarmTriggerIds`.
+
+        Required access right: _Admin_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [OriginGuids, ProductionAlarmTriggerIds]
+              properties:
+                OriginGuids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: The `commandGuid` values of the generation rules (assigned by the command that created or last changed them).
+                ProductionAlarmTriggerIds:
+                  type: array
+                  items:
+                    type: integer
+                  description: The identifiers of the generation rules (historically "production alarm triggers").
+                TimeSpan:
+                  type: string
+                  description: The new minimum stop length, in the `hh:mm:ss` format.
+            example:
+              OriginGuids: [bbf8dc05-0735-43b3-a2fb-6406bda5097f]
+              ProductionAlarmTriggerIds: [42]
+              TimeSpan: "00:10:00"
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /DowntimeAlarmDeleteCommands:
+    post:
+      operationId: deleteDowntimeAlarm
+      tags: [Automatic Downtime Generation]
+      summary: Disable automatic downtime generation
+      description: |
+        Disables the automatic downtime generation - deletes the generation rules identified by `OriginGuids` and `ProductionAlarmTriggerIds`.
+
+        Required access right: _Admin_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [OriginGuids, ProductionAlarmTriggerIds]
+              properties:
+                OriginGuids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                ProductionAlarmTriggerIds:
+                  type: array
+                  items:
+                    type: integer
+            example:
+              OriginGuids: [bbf8dc05-0735-43b3-a2fb-6406bda5097f]
+              ProductionAlarmTriggerIds: [42]
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  # ---------------------------------------------------------------------------
   # Job Types
   # ---------------------------------------------------------------------------
   /JobTypes:
@@ -2213,6 +2713,97 @@ components:
           description: UTC date and time when the command was processed.
         _links:
           $ref: "#/components/schemas/HalLinks"
+
+
+    # Internal-only downtime code properties, intentionally not documented
+    # (returned by the API, but intended for the Portal frontend):
+    # * severity - Undefined/Minor/Major/Critical classification of the cause
+    # * order - the position of the code in the list offered to operators
+    DowntimeCode:
+      type: object
+      description: A downtime code from the dictionary. Properties with `null` values are omitted in HAL responses.
+      properties:
+        downtimeCodeId:
+          type: integer
+        key:
+          type: string
+          description: Server-assigned identifier of the code, referenced by downtime metadocuments (`downtimeCodeKey`).
+        code:
+          type: string
+          maxLength: 10
+          description: Short human-readable code displayed in the UI.
+        title:
+          type: string
+          description: The description of the downtime cause.
+        color:
+          type: [string, "null"]
+          description: Color in the hex color code.
+        validTo:
+          type: [string, "null"]
+          format: date-time
+          description: Soft-delete timestamp; `null` for active codes.
+        commandGuid:
+          type: string
+          format: uuid
+          description: The identifier of the command that created or last changed the code; used as `OriginGuids` in the management commands.
+        canBeSelected:
+          type: boolean
+        maxLength:
+          type: [integer, "null"]
+          description: The maximal length of the downtime in seconds; a longer downtime is automatically split.
+        isBreakdown:
+          type: [boolean, "null"]
+        isCommentRequired:
+          type: [boolean, "null"]
+        isTransferable:
+          type: [boolean, "null"]
+        isShiftPauseTransferable:
+          type: [boolean, "null"]
+        isReducingPlannedTime:
+          type: [boolean, "null"]
+        isReducingProduction:
+          type: [boolean, "null"]
+        isReducingProductionTime:
+          type: [boolean, "null"]
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+
+    # Internal-only write properties (accepted, but intended for the Portal
+    # frontend): Severity, Order - see the comment above DowntimeCode.
+    DowntimeCodeWrite:
+      type: object
+      required: [Code, Title]
+      properties:
+        Code:
+          type: string
+          maxLength: 10
+          pattern: '^([a-zA-Z0-9]+\.?)+$'
+          description: Short human-readable code displayed in the UI.
+        Title:
+          type: string
+          description: The description of the downtime cause.
+        Color:
+          type: string
+          description: Color in the hex color code.
+        CanBeSelected:
+          type: boolean
+        IsBreakdown:
+          type: boolean
+        IsCommentRequired:
+          type: boolean
+        IsTransferable:
+          type: boolean
+        IsShiftPauseTransferable:
+          type: boolean
+        IsReducingPlannedTime:
+          type: boolean
+        IsReducingProduction:
+          type: boolean
+        IsReducingProductionTime:
+          type: boolean
+        MaxLength:
+          type: integer
+          description: The maximal length of the downtime in seconds; a longer downtime is automatically split.
 
   responses:
     Unauthorized:
