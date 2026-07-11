@@ -1,0 +1,1570 @@
+openapi: 3.1.0
+info:
+  title: Plantyst Portal
+  version: "1.0.0"
+  description: |
+    Plantyst Portal API is a REST API designed to access data related to customer measurements like basic time series, metrics or annotations.
+
+    Some API responses use the HAL convention. HAL (Hypertext Application Language) is a standard convention for defining hypermedia such as links to external resources within JSON or XML code. The standard was initially proposed in June 2012 specifically for use with JSON and has since become available in two variations, JSON and XML. The two associated MIME types are media type application/hal+xml and media type application/hal+json. See also https://en.wikipedia.org/wiki/Hypertext_Application_Language.
+
+    To receive responses in the HAL format, send the `Accept: application/hal+json` header with the request. Without this header, the same data are returned in an alternative plain JSON serialization (embedded collections as top-level properties and `_links` as an array of link objects). The examples in this documentation show the HAL format.
+
+    In HAL responses, a relation with a single link is serialized as an object, while a relation with multiple links is serialized as an array of link objects.
+  contact:
+    name: Plantyst support
+    email: support@plantyst.com
+
+servers:
+  - url: https://portal.plantyst.com/api
+
+security:
+  - oauth2: []
+  - basicApiKey: []
+  - apiKeyHeader: []
+  - apiKeyQuery: []
+
+tags:
+  - name: Authorization
+    description: |
+      The API supports two authorization mechanisms:
+
+      * __OAuth2__ - bearer tokens in the _JWT_ (_JSON Web Token_) format, obtained through the OAuth2 authorization code flow described below; intended for third party applications acting on behalf of a Plantyst user
+      * __API key__ - a per-user secret key; intended for server-to-server integrations
+
+      Credentials for both mechanisms (`client_id`, `client_secret` and `redirect_uri` for OAuth2, the API key) are issued on request at [support@plantyst.com](mailto:support@plantyst.com).
+
+      __Note:__ When a request is not authenticated (missing or invalid credentials), the server currently responds with a `302` redirect to the login page instead of a plain `401`. API clients should disable automatic redirect following and treat a `302` on an API URL as an authentication failure. The `401` responses documented below describe the intended semantics.
+
+      __API key authorization__
+
+      The API key is bound to a specific Plantyst user and may have a limited validity period. The key can be passed with the request in one of the following ways:
+
+      * __HTTP Basic authentication__ - the `Authorization` header with the `Basic` scheme, where the username is the user's email and the password is the API key: `Authorization: Basic {base64(email:api_key)}`
+      * __Custom header__ - the `X-API-KEY` header: `X-API-KEY: {api_key}`
+      * __Query string__ - the `api_key` parameter appended to the request URL: `https://portal.plantyst.com/api/Measurements?api_key={api_key}`; useful for quick tests, but avoid it in production integrations because URLs tend to end up in logs
+
+      __OAuth2 authorization__
+
+      The OAuth2 workflow is designed to acquire a user token for the access to user resources in Plantyst through the public API. The token serves as the authorization mechanism for third party applications. The application needs to be registered in the Plantyst system, having its own `client_id`, `client_secret` and `redirect_uri` properties.
+
+      The acquired access token is passed with every API request in the `Authorization` header:
+
+      ```
+      Authorization: Bearer {access_token}
+      ```
+  - name: Measurements
+    description: |
+      This section contains endpoints for the resources related to measurements and their basic properties. A measurement is a key data type to which the most of other API data has a relation. A measurement object has the following properties:
+
+      * `measurementId` - unique identifier of the measurement
+      * `title` - title of the measurement
+      * `description` - additional description for the measurement
+      * `quantityType` - type of the measured quantity; available values: `speed` (continuous production), `rate` (number of pieces), `stroke` (production cycle count), `time` (run time), `temperature`, `humidity`, `power`, `flow`, `workload`, `rotation`
+      * `archived` - determines whether the measurement is archived
+      * `first` - the date and time of the first collected data sample
+      * `rights` - the array of current user access rights for the measurement
+
+      The rights used in the Plantyst application are the following:
+      * _View_ - right to view measurement data
+      * _Contributor_ - right to create, update and delete records like annotations, jobs and downtimes
+      * _DataAdmin_ - right to import job lists (JobTypes import) and to manage the measurement calendar
+      * _Admin_ - right to update measurement configuration (user access, tags, downtime codes, ...)
+      * _Owner_ - same as Admin, but the access rights can't be revoked
+
+      The rights are hierarchical: each right includes all the lower ones (e.g. a user with the _DataAdmin_ right also has the _Contributor_ and _View_ rights). Endpoints in this documentation state the minimal required access right.
+  - name: Measurement Data
+    description: This section describes the API endpoints for accessing the basic measurement data.
+  - name: Metadocuments
+    description: |
+      Resources related to metadocuments in the API. Metadocument is a general term for various types of measurement-related data like annotations, comments, jobs or downtime entries. Metadocument can be defined for a single time point or for time range. Metadocument has the following properties:
+
+      * `Guid` - unique identifier of the metadocument (mandatory)
+      * `MeasurementId` - identifier of the measurement to which the metadocument belongs (mandatory)
+      * `Type` - type of the metadocument (mandatory); available values:
+          * `0` - undefined type
+          * `1` - annotation
+          * `2` - job
+          * `3` - downtime
+      * `LastModified` - the date and time of the last modification in UTC
+      * `From` - start date and time in UTC
+      * `To` - end date and time in UTC; To can have a value or be null; if To is same as From, then it is a single time point metadocument; if To is greater than From, then it is a time range metadocument; If To is null, then it is unlimited metadocument
+      * `Title` - metadocument title
+      * `Description` - extended description, enables _MarkDown_ markup language
+      * `CustomId` - user-defined identifier
+      * `Color` - color in hex color code
+      * `Setpoint` - setpoint for the metadocument; represents the desired value for the measured quantity
+      * `DowntimeCode` - related downtime code identifier
+      * `CreatorId` - user identifier of the metadocument creator
+      * `Operations` - operations defined as the array of string values
+      * `ProductionEntries` - embeded array of information about producted items like entry time, amount, OK or NOT OK items
+      * `Users` - embeded array of information about users
+      * `LastModified` - the last modified date of the metadocument
+      * `DowntimeCodeKey` - down time code key
+      * `PlannedFrom` - planned from date
+      * `PlannedTo` - planned to date
+      * `CustomFields` - object with custom fields
+      * `Comments` - embeded array of comment objects
+
+      A metadocument comment is a self-contained data type with the following properties:
+
+      * `Id` - identifier of the comment; unique within the metadocument
+      * `Text` - comment text
+      * `ModificationTime` - UTC date and time of the last modification
+
+      __Command-based architecture__
+
+      All operations over metadocuments that change their state are command-based, therefore the response for such actions is formed as the relative link to the location, where the result of the request should be checked.
+  - name: CSV file with JOBs
+    description: |
+      To upload a CSV with JOBs you need an access token and CSV file according to the following specification: coding UTF-8, separated by commas and containing header. We will prepare this access token for you (please contact us at support@plantyst.com).
+
+      Response for such actions is formed as the relative link to the location, where the result of the request should be checked. States Waiting and InProgress relates to waiting in queue of requests and processing progress. State Success indicates successful completion, state DataError occurs when CSV file contains invalid data and/or request for adjustment JOBs for measurements in which user have not sufficient rights.
+
+paths:
+  /OAuth/Authorize:
+    get:
+      operationId: getLoginPage
+      tags: [Authorization]
+      summary: Get login page
+      description: |
+        To get the login page, the application has to redirect the user to the following URL: `https://portal.plantyst.com/OAuth/Authorize?client_id={client_id}&response_type=code&redirect_uri={url_encoded_redirect_uri}&state={optional_state_string}`.
+
+        Once the user logs in and confirms the delegation of the rights to the third party application, the server redirects the user to the given redirect URL and adds the temporary authorization code to the response query string. The authorization code is valid for 5 minutes.
+
+        In case of a login error, the next procedure is described in the RFC https://tools.ietf.org/html/rfc6749#section-4.1.2.1
+      security: []
+      servers:
+        - url: https://portal.plantyst.com
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+          example: 9sgfr867q
+          description: Obtained during the registration process of the application.
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [code]
+          example: code
+          description: The type of the authorization flow; currently, Plantyst supports only the „code“ type.
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            type: string
+          example: https://URL
+          description: Absolute URI to which the user will be redirected after successful login.
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+          example: option
+          description: Optional parameter, returned back to the redirect URL.
+      responses:
+        "200":
+          description: The login page.
+
+  /OAuth/Token:
+    post:
+      operationId: retrieveAccessToken
+      tags: [Authorization]
+      summary: Access token request
+      description: |
+        To get the actual access token, the client application sends a POST request with `grant_type` set to `authorization_code` and the following parameters:
+        * `grant_type` - "authorization_code"
+        * `code` - temporary authorization code from the first step
+        * `redirect_uri` - redirect_uri of the application
+        * `client_id` - client_id of the application
+        * `client_secret` - client_secret of the application
+
+        The response of the server is the user authorization token (JWT token) that can be used to authorize API requests by the given user and contains `expires_in` which is the number of seconds until the token expires.
+        A refresh token is returned as well.
+
+        __Refreshing the access token__
+
+        When the access token expires, the application obtains a new one without user interaction by sending a POST request to the same URL with `grant_type` set to `refresh_token` and the following parameters:
+        * `grant_type` - "refresh_token"
+        * `refresh_token` - the refresh token returned with the previous access token
+        * `client_id` - client_id of the application
+        * `client_secret` - client_secret of the application
+
+        Each successful refresh returns a new refresh token. The previous refresh token stays valid for 24 hours after the exchange, then it is discarded.
+
+        In case of an error, the server responds with `400 Bad Request` and an `error` value according to [RFC 6749, section 5.2](https://tools.ietf.org/html/rfc6749#section-5.2): `invalid_request`, `invalid_client`, `invalid_grant` or `unsupported_grant_type`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/AuthorizationCodeTokenRequest"
+                - $ref: "#/components/schemas/RefreshTokenRequest"
+            examples:
+              authorizationCode:
+                summary: Exchange of the authorization code
+                value:
+                  grant_type: authorization_code
+                  code: "wxTd41…"
+                  redirect_uri: https://application.example.com/callback
+                  client_id: 9sgfr867q
+                  client_secret: "pRt5cd…"
+              refreshToken:
+                summary: Refreshing the access token
+                value:
+                  grant_type: refresh_token
+                  refresh_token: "3RZm2h56Sr1JB7dQxbC0T4Wu9pKfMv8jYgNaLeXsIoE="
+                  client_id: 9sgfr867q
+                  client_secret: "pRt5cd…"
+      responses:
+        "200":
+          description: The user authorization token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationToken"
+              example:
+                token_type: Bearer
+                access_token: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJDbGllbnRJZCI6..."
+                expires_in: 86400
+                refresh_token: "3RZm2h56Sr1JB7dQxbC0T4Wu9pKfMv8jYgNaLeXsIoE="
+        "400":
+          description: Invalid token request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthError"
+              example:
+                error: invalid_grant
+
+  /Measurements:
+    get:
+      operationId: listMeasurements
+      tags: [Measurements]
+      summary: List Measurements
+      description: |
+        Gets the list of measurements for which the current user has the access rights for view or higher.
+
+        Required access right: _View_.
+
+        Along with the measurements (the `measurement` relation), additional data are embedded in the response under the following relations:
+        * `timezone` array of all distinct timezones assigned to measurements
+        * `tag` array of all distinct tags assigned to measurements
+        * `measurementDataVersion` array of measurement data versions
+        * `measurementCustomField` array of all distinct custom fields assigned to measurements
+        * `hierarchicalLocation` array of hierarchical locations the measurements belong to
+      parameters:
+        - name: groupId
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Identifier of a hierarchical location group. When specified, only measurements within the hierarchy of the given group are returned and the `currentSubscriptionOnly` parameter is ignored.
+        - name: currentSubscriptionOnly
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+          example: true
+          description: Determines whether all measurements or only measurements from the user's current subscription are returned.
+      responses:
+        "200":
+          description: The list of measurements with embedded related resources.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/MeasurementList"
+              example:
+                _links:
+                  self:
+                    href: /Api/Measurements
+                _embedded:
+                  timezone:
+                    - id: Central Europe Standard Time
+                      name: (UTC+01:00) Belgrade, Bratislava, Budapest, Ljubljana, Prague
+                      iana: Europe/Prague
+                      _links:
+                        self:
+                          href: /Api/TimeZone/Central%20Europe%20Standard%20Time
+                  tag:
+                    - id: "83"
+                      title: Technology
+                      color: "#E67E22"
+                      _links:
+                        self:
+                          href: /Api/Tag/83
+                    - id: "82"
+                      title: Shop 1
+                      color: "#1ABC9C"
+                      _links:
+                        self:
+                          href: /Api/Tag/82
+                  measurementDataVersion:
+                    - id: "414"
+                      title: TimeSeries
+                      lastModified: "2016-10-25T16:05:00Z"
+                      _links:
+                        self:
+                          href: /Api/MeasurementDataVersion/414
+                    - id: "415"
+                      title: DowntimeCodes
+                      lastModified: "2016-10-25T16:05:00Z"
+                      _links:
+                        self:
+                          href: /Api/MeasurementDataVersion/415
+                  measurementCustomField:
+                    - id: 12
+                      key: CostCenter
+                      value: CC-100
+                      _links:
+                        self:
+                          href: /Api/MeasurementCustomField/12
+                  hierarchicalLocation:
+                    - hierarchicalLocationId: 51
+                      title: Hall A
+                      shortTitle: A
+                      level: /51/
+                      _links:
+                        self:
+                          href: /Api/HierarchicalLocations/51
+                  measurement:
+                    - measurementId: 3
+                      title: A | 01 | Machine 1
+                      description: Main production line
+                      quantityType: speed
+                      archived: false
+                      first: "2016-01-01T00:00:00Z"
+                      rights: [Admin]
+                      _links:
+                        self:
+                          href: /Api/Measurement/3
+                        timezone:
+                          href: /Api/TimeZone/Central%20Europe%20Standard%20Time
+                        tags:
+                          href: /Api/Tag/82
+                        dataVersions:
+                          - href: /Api/MeasurementDataVersion/414
+                          - href: /Api/MeasurementDataVersion/415
+                        customFields:
+                          href: /Api/MeasurementCustomField/12
+                        hierarchicalLocation:
+                          href: /Api/HierarchicalLocations/51
+                    - measurementId: 4
+                      title: A | 02 | Machine 2
+                      description: Main production line
+                      quantityType: rate
+                      archived: false
+                      first: "2016-01-01T00:00:00Z"
+                      rights: [Admin]
+                      _links:
+                        self:
+                          href: /Api/Measurement/4
+                        timezone:
+                          href: /Api/TimeZone/Central%20Europe%20Standard%20Time
+                        tags:
+                          href: /Api/Tag/83
+                        dataVersions:
+                          href: /Api/MeasurementDataVersion/415
+                        hierarchicalLocation:
+                          href: /Api/HierarchicalLocations/51
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /MeasurementTimeSeriesAggregationsQuery:
+    post:
+      operationId: listMeasurementTimeSeriesAggregations
+      tags: [Measurement Data]
+      summary: List Measurement Time Series Aggregation
+      description: |
+        Gets the list of Time Series Aggregation items for the given measurements.
+
+        Required access right: _View_.
+
+        The request contains the definition of queries, each for one measurement. A required part of the query is the `View` parameter, which specifies the type of the data aggregation.
+        Available values are:
+        * `"Base.MinuteSet"` - set of atomic minute aggregations, each for one UTC minute
+        * `"Base.Hour"` - set of hour aggregations, each for one UTC hour
+        * `"Base.Day"` - set of day aggregations, each for one day in the measurement time zone
+        * `"Base.Month"` - set of month aggregations, each for one month in the measurement time zone
+
+        The response for the request contains the copy of the original query, the set of data items and the recipe for the interpretation of the data items (`outputFormat`).
+        Each item in the output format defines interpretation of the respective data item.
+        For five output format items and two data samples, there will be ten data items in the response. The array may contain the following values:
+        * `ItemCount` - defines the count of the atomic data items in the aggregation
+        * `TimeSquareSum` - auxiliary value for the optimized data computations
+        * `TimeSum` - auxiliary value for the optimized data computations
+        * `TimeValueSum` - auxiliary value for the optimized data computations
+        * `ValueSum` - specifies the overall (sum) value of the data item
+
+        The output format depends on the requested view: `Base.MinuteSet` returns only `ValueSum`, the other views return all five values.
+
+        The server responds with `400 Bad Request` when the payload is missing, a query has no `View`, or `Precision` is outside the range 0-15. When the user does not have access to all queried measurements, the server responds with `403 Forbidden`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Queries:
+                  type: array
+                  items:
+                    type: object
+                    required: [MeasurementId, From, To, View]
+                    properties:
+                      MeasurementId:
+                        type: integer
+                        description: Unique measurement identifier.
+                      From:
+                        type: string
+                        format: date-time
+                        description: UTC date and time in ISO 8601 format that specifies the inclusive lower bound of the data query.
+                      To:
+                        type: string
+                        format: date-time
+                        description: UTC date and time in ISO 8601 format that specifies the exclusive upper bound of the data query.
+                      View:
+                        type: string
+                        description: Specifies the requested time series type.
+                      Precision:
+                        type: integer
+                        minimum: 0
+                        maximum: 15
+                        description: Specifies the number of decimal places of the returned values (0-15); when omitted, an adaptive rounding is used.
+            example:
+              Queries:
+                - MeasurementId: 3
+                  From: "2017-06-01T00:00:00Z"
+                  To: "2017-06-01T00:09:00Z"
+                  View: Base.MinuteSet
+                  Precision: 2
+                - MeasurementId: 4
+                  From: "2017-05-31T21:00:00Z"
+                  To: "2017-05-31T23:00:00Z"
+                  View: Base.Hour
+                  Precision: 2
+      responses:
+        "200":
+          description: The time series aggregations, one result per query.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        query:
+                          type: object
+                          description: The copy of the original query.
+                          properties:
+                            measurementId:
+                              type: integer
+                            from:
+                              type: string
+                              format: date-time
+                            to:
+                              type: string
+                              format: date-time
+                            view:
+                              type: string
+                            precision:
+                              type: [integer, "null"]
+                        outputFormat:
+                          type: array
+                          description: Defines the interpretation for the `data` section.
+                          items:
+                            type: string
+                        data:
+                          type: array
+                          description: Array of data items.
+                          items:
+                            type: [number, "null"]
+                        first:
+                          type: string
+                          format: date-time
+                          description: UTC date and time of first returned data item in ISO 8601 format.
+              example:
+                results:
+                  - query:
+                      view: Base.MinuteSet
+                      precision: 2
+                      measurementId: 3
+                      from: "2017-06-01T00:00:00Z"
+                      to: "2017-06-01T00:09:00Z"
+                    outputFormat: [ValueSum]
+                    data: [0, 0, 3, 10, 11, 10, 9, 11, 10, 7]
+                    first: "2017-06-01T00:00:00Z"
+                  - query:
+                      view: Base.Hour
+                      precision: 2
+                      measurementId: 4
+                      from: "2017-05-31T21:00:00Z"
+                      to: "2017-05-31T23:00:00Z"
+                    outputFormat: [ItemCount, TimeSquareSum, TimeSum, TimeValueSum, ValueSum]
+                    data: [60, 70210, 1770, 33352, 1196, 60, 70210, 1770, 24442, 963]
+                    first: "2017-05-31T21:00:00Z"
+        "400":
+          description: The payload is missing, a query has no `View`, or `Precision` is outside the range 0-15. The response has an empty body.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user does not have access to all queried measurements. The response has an empty body.
+
+  # ---------------------------------------------------------------------------
+  # Metadocuments — content converted 1:1 from apiary.apib; will be updated
+  # against the current code state in a follow-up documentation group.
+  # ---------------------------------------------------------------------------
+  /Metadocuments:
+    post:
+      operationId: addMetadocument
+      tags: [Metadocuments]
+      summary: Add Metadocument
+      description: Adds metadocument of given type for the specific measurement.
+      requestBody:
+        required: true
+        content:
+          application/hal+json:
+            schema:
+              type: object
+              required: [MeasurementId, Type, From]
+              properties:
+                MeasurementId:
+                  type: integer
+                Type:
+                  type: integer
+                From:
+                  type: string
+                  format: date-time
+                To:
+                  type: [string, "null"]
+                  format: date-time
+                Title:
+                  type: string
+                Description:
+                  type: string
+                CustomId:
+                  type: string
+                Setpoint:
+                  type: number
+                Color:
+                  type: string
+                Operations:
+                  type: array
+                  items:
+                    type: string
+                CustomFields:
+                  type: array
+                  items: {}
+                DowntimeCode:
+                  type: string
+                DowntimeCodeKey:
+                  type: string
+                PlannedFrom:
+                  type: string
+                  format: date-time
+                PlannedTo:
+                  type: string
+                  format: date-time
+      responses:
+        "200":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      operationId: patchMetadocument
+      tags: [Metadocuments]
+      summary: Patch Metadocument
+      description: Updates the metadocument with specific Guid and given parameters.
+      requestBody:
+        required: true
+        content:
+          application/hal+json:
+            schema:
+              type: object
+              required: [Guid]
+              properties:
+                Guid:
+                  type: string
+                MeasurementId:
+                  type: integer
+                From:
+                  type: string
+                  format: date-time
+                To:
+                  type: [string, "null"]
+                  format: date-time
+                Title:
+                  type: string
+                Description:
+                  type: string
+                CustomId:
+                  type: string
+                Setpoint:
+                  type: number
+                Color:
+                  type: string
+                Operations:
+                  type: array
+                  items:
+                    type: string
+                CustomFields:
+                  type: array
+                  items: {}
+                DowntimeCode:
+                  type: string
+                DowntimeCodeKey:
+                  type: string
+                PlannedFrom:
+                  type: string
+                  format: date-time
+                PlannedTo:
+                  type: string
+                  format: date-time
+      responses:
+        "200":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /Metadocuments/{guid}:
+    parameters:
+      - name: guid
+        in: path
+        required: true
+        schema:
+          type: string
+        example: e2dd39dc-5389-43b9-b855-426af762811f
+        description: Unique identifier for the metadocument.
+    delete:
+      operationId: deleteMetadocument
+      tags: [Metadocuments]
+      summary: Delete Metadocument
+      description: Deletes the metadocument with specific Guid.
+      responses:
+        "200":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    get:
+      operationId: getMetadocument
+      tags: [Metadocuments]
+      summary: Get Metadocument
+      description: Gets metadocument with specific Guid with embedded comments.
+      responses:
+        "200":
+          description: The metadocument with embedded comments.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  guid:
+                    type: string
+                  type:
+                    type: integer
+                  title:
+                    type: string
+                  creatorId:
+                    type: integer
+                  measurementId:
+                    type: integer
+                  from:
+                    type: string
+                    format: date-time
+                  to:
+                    type: [string, "null"]
+                    format: date-time
+                  color:
+                    type: string
+                  setpoint:
+                    type: number
+                  lastModified:
+                    type: string
+                    format: date-time
+                  _links:
+                    type: object
+                  _embedded:
+                    type: object
+                    properties:
+                      comment:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                            text:
+                              type: string
+                            modificationTime:
+                              type: string
+                              format: date-time
+                            _links:
+                              type: object
+              example:
+                guid: 27a858a0-c244-4640-83f8-513dbc70c2e6
+                type: 3
+                title: Downtime title
+                creatorId: 497
+                measurementId: 3
+                from: "2017-06-26T05:30:00Z"
+                to: "2017-06-26T07:30:00Z"
+                color: "#969614"
+                setpoint: 50.0
+                lastModified: "2017-06-26T09:25:15Z"
+                _links:
+                  self:
+                    href: /Api/Metadocuments/27a858a0-c244-4640-83f8-513dbc70c2e6
+                _embedded:
+                  comment:
+                    - id: 1
+                      text: Comment text
+                      modificationTime: "2017-07-19T11:52:12Z"
+                      _links:
+                        self:
+                          href: /Api/Metadocuments/27a858a0-c244-4640-83f8-513dbc70c2e6/Comments/1/
+                        user:
+                          href: /Api/User/101
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /Metadocuments/{guid}/ProductionEntries:
+    parameters:
+      - name: guid
+        in: path
+        required: true
+        schema:
+          type: string
+        example: e2dd39dc-5389-43b9-b855-426af762811f
+        description: Unique identifier for the metadocument.
+    post:
+      operationId: addProductionEntry
+      tags: [Metadocuments]
+      summary: Add Production Entry
+      description: Adds production entry into metadocument.
+      requestBody:
+        required: true
+        content:
+          application/hal+json:
+            schema:
+              type: object
+              required: [Value, Type]
+              properties:
+                Value:
+                  type: number
+                Type:
+                  type: string
+                Note:
+                  type: string
+                Time:
+                  type: string
+                  format: date-time
+      responses:
+        "200":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: patchProductionEntry
+      tags: [Metadocuments]
+      summary: Patch Production Entry
+      description: Updates the production entry with specific Id and given parameters.
+      requestBody:
+        required: true
+        content:
+          application/hal+json:
+            schema:
+              type: object
+              required: [Id, Value, Type]
+              properties:
+                Id:
+                  type: integer
+                Value:
+                  type: number
+                Type:
+                  type: string
+                Note:
+                  type: string
+                Time:
+                  type: string
+                  format: date-time
+      responses:
+        "200":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /MetadocumentsQuery:
+    post:
+      operationId: getMetadocuments
+      tags: [Metadocuments]
+      summary: Get Metadocuments
+      description: Gets the metadocuments for a given measurement and time range.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Queries:
+                  type: array
+                  items:
+                    type: object
+                    required: [MeasurementId, From, To]
+                    properties:
+                      MeasurementId:
+                        type: integer
+                      From:
+                        type: string
+                        format: date-time
+                      To:
+                        type: string
+                        format: date-time
+            example:
+              Queries:
+                - MeasurementId: 3
+                  From: "2017-05-31T22:00:00Z"
+                  To: "2017-06-01T19:59:59Z"
+      responses:
+        "200":
+          description: The metadocuments with embedded comments and related users.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  responseContinuation:
+                    type: string
+                    description: Continuation token if the returned data are too long for one response; empty if the query is fully satisfied.
+                  dateTime:
+                    type: string
+                    format: date-time
+                    description: UTC date and time in ISO 8601 format for which the response is up to date.
+                  _links:
+                    type: object
+                  _embedded:
+                    type: object
+                    properties:
+                      user:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            userId:
+                              type: integer
+                            name:
+                              type: string
+                            _links:
+                              type: object
+                      metadocument:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            guid:
+                              type: string
+                            type:
+                              type: integer
+                            creatorId:
+                              type: integer
+                            measurementId:
+                              type: integer
+                            from:
+                              type: string
+                              format: date-time
+                            to:
+                              type: [string, "null"]
+                              format: date-time
+                            color:
+                              type: string
+                            lastModified:
+                              type: string
+                              format: date-time
+                            _links:
+                              type: object
+                            _embedded:
+                              type: object
+                              properties:
+                                comment:
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: integer
+                                      text:
+                                        type: string
+                                      modificationTime:
+                                        type: string
+                                        format: date-time
+                                      _links:
+                                        type: object
+              example:
+                responseContinuation: ""
+                dateTime: "2017-07-13T07:03:03.211009Z"
+                _links:
+                  self:
+                    href: /Api/MetadocumentsQuery/
+                _embedded:
+                  user:
+                    - userId: 497
+                      name: Martin Kouďa
+                      _links:
+                        self:
+                          href: /Api/User/497
+                  metadocument:
+                    - guid: 13f6a3b3-0416-49e9-81ed-fab139518c0d
+                      type: 1
+                      creatorId: 497
+                      measurementId: 3
+                      from: "2017-06-01T10:18:00Z"
+                      to: "2017-06-01T10:18:00Z"
+                      color: ""
+                      lastModified: "2017-07-04T07:48:34Z"
+                      _links:
+                        self:
+                          href: /Api/Metadocuments/13f6a3b3-0416-49e9-81ed-fab139518c0d
+                      _embedded:
+                        comment:
+                          - id: 0
+                            text: Ahoj...
+                            modificationTime: "2017-07-03T12:00:56Z"
+                            _links:
+                              self:
+                                href: /Api/Metadocuments/13f6a3b3-0416-49e9-81ed-fab139518c0d/Comments/0/
+                              user:
+                                href: /Api/User/497
+                          - id: 1
+                            text: Nazdar...
+                            modificationTime: "2017-07-04T07:48:41Z"
+                            _links:
+                              self:
+                                href: /Api/Metadocuments/13f6a3b3-0416-49e9-81ed-fab139518c0d/Comments/1/
+                              user:
+                                href: /Api/User/497
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /MetadocumentCommandResults/{guid}:
+    get:
+      operationId: getMetadocumentCommandResult
+      tags: [Metadocuments]
+      summary: Get Metadocument Command Result
+      description: Gets the metadocument command result.
+      parameters:
+        - name: guid
+          in: path
+          required: true
+          schema:
+            type: string
+          example: f57513ba-c004-45bc-b28c-610eb00de7c
+          description: Unique identifier for the metadocument command.
+      responses:
+        "200":
+          description: The metadocument command result.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  guid:
+                    type: string
+                    description: Unique identifier for the metadocument command.
+                  result:
+                    type: string
+                    description: Text representation of the result.
+                  processedDate:
+                    type: string
+                    format: date-time
+                    description: Processed date and time of the command in ISO 8601 format.
+                  metadocumentGuid:
+                    type: string
+                    description: Specifies identifier for the related metadocument.
+                  _links:
+                    type: object
+              example:
+                guid: 27a858a0-c244-4640-83f8-513dbc70c2e6
+                result: Success
+                processedDate: "2017-06-26T05:30:00Z"
+                metadocumentGuid: 2b8748ba-8830-4350-b68b-2599d53f2701
+                _links:
+                  self:
+                    href: /Api/MetadocumentCommandResults/f57513ba-c004-45bc-b28c-610eb00de7c
+                  metadocument:
+                    href: /Api/Metadocuments/27a858a0-c244-4640-83f8-513dbc70c2e6
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /Metadocuments/{guid}/Comments:
+    parameters:
+      - name: guid
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Specifies the unique identifier for the metadocument.
+    post:
+      operationId: addMetadocumentComment
+      tags: [Metadocuments]
+      summary: Add Metadocument Comment
+      description: Adds comment to the specific metadocument.
+      requestBody:
+        required: true
+        content:
+          application/hal+json:
+            schema:
+              type: object
+              properties:
+                Text:
+                  type: string
+            example:
+              Text: Comment text.
+      responses:
+        "200":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: patchMetadocumentComment
+      tags: [Metadocuments]
+      summary: Patch Metadocument Comment
+      description: Updates comment for the specific metadocument.
+      requestBody:
+        required: true
+        content:
+          application/hal+json:
+            schema:
+              type: object
+              required: [Id]
+              properties:
+                Id:
+                  type: integer
+                Text:
+                  type: string
+            example:
+              Id: 12
+              Text: Comment text.
+      responses:
+        "200":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /Metadocuments/{guid}/Comments/{id}:
+    delete:
+      operationId: deleteMetadocumentComment
+      tags: [Metadocuments]
+      summary: Delete Metadocument Comment
+      description: Deletes comment for the specific metadocument.
+      parameters:
+        - name: guid
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The unique identifier of the metadocument.
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: The unique identifier of the comment and its version within the metadocument.
+      responses:
+        "200":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------
+  # CSV file with JOBs — content converted 1:1 from apiary.apib; will be updated
+  # against the current code state in a follow-up documentation group.
+  # ---------------------------------------------------------------------------
+  /JobTypesImportCommands:
+    post:
+      operationId: uploadJobTypesCsv
+      tags: [CSV file with JOBs]
+      summary: Upload CSV file
+      description: |
+        Uploads the CSV file with JOBs.
+
+        The content of these CSV file must be MIME multipart content and only single file upload is supported.
+
+        A response object has the following properties:
+
+        * `location` (string) - specifies the relative URL with the result of the requested operation
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                jobTypesFile:
+                  type: string
+                  contentMediaType: text/csv
+                  description: The CSV file with JOBs (UTF-8, comma separated, with header).
+      responses:
+        "200":
+          description: The relative URL with the result of the requested operation.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/CommandLocation"
+              example:
+                location: api/commandResults/5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
+
+  /JobTypes:
+    get:
+      operationId: getJobTypes
+      tags: [CSV file with JOBs]
+      summary: Get job types
+      description: |
+        Gets the list of uploaded JOBs.
+
+        A response object has the following properties:
+
+        * `jobTypeId` - unique JOB identifier
+        * `title` - title of the JOB
+        * `setpoint` - speed prescription
+        * `measurementId` - unique measurement identifier
+        * `plannedFrom` - planned from date
+        * `plannedTo` - planned to date
+        * `isPermanent` - is the JOB permanent
+        * `currentState` - current state
+        * `maximumProductionCoefficient` - maximum production coefficient
+        * `order` - order
+        * `commandGuid` - unique command identifier
+        * `description` - description
+        * `operations` - operations
+        * `targetAmount` - target amount
+        * `customFields` - custom fields
+      responses:
+        "200":
+          description: The list of uploaded JOBs.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  resourceList:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        jobTypeId:
+                          type: integer
+                        title:
+                          type: string
+                        setpoint:
+                          type: [number, "null"]
+                        measurementId:
+                          type: integer
+                        plannedFrom:
+                          type: [string, "null"]
+                          format: date-time
+                        plannedTo:
+                          type: [string, "null"]
+                          format: date-time
+                        isPermanent:
+                          type: boolean
+                        currentState:
+                          type: string
+                        maximumProductionCoefficient:
+                          type: [number, "null"]
+                        order:
+                          type: integer
+                        commandGuid:
+                          type: string
+                        description:
+                          type: [string, "null"]
+                        operations:
+                          type: [array, "null"]
+                          items:
+                            type: string
+                        targetAmount:
+                          type: [number, "null"]
+                        customFields:
+                          type: [object, "null"]
+                        _links: {}
+                        _embedded: {}
+              example:
+                resourceList:
+                  - jobTypeId: 42457026
+                    title: Zakázka 1
+                    setpoint: 50
+                    measurementId: 1770
+                    plannedFrom: "2019-07-02T06:50:00Z"
+                    plannedTo: "2019-07-02T07:20:00Z"
+                    isPermanent: false
+                    currentState: Available
+                    maximumProductionCoefficient: null
+                    order: 1
+                    commandGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
+                    description: null
+                    operations: null
+                    targetAmount: null
+                    customFields: null
+                    _links:
+                      - rel: self
+                        href: ~/Api/JobTypes/42457026
+                        title: null
+                        isTemplated: false
+                    _embedded: null
+                  - jobTypeId: 41205284
+                    title: 01.SP
+                    setpoint: 36.67
+                    measurementId: 1771
+                    plannedFrom: null
+                    plannedTo: null
+                    isPermanent: false
+                    currentState: Available
+                    maximumProductionCoefficient: null
+                    order: 1
+                    commandGuid: 1d8a6a09-d957-4969-9c69-2a061d6c92f4
+                    description: null
+                    operations: null
+                    targetAmount: null
+                    customFields: null
+                    _links:
+                      - rel: self
+                        href: ~/Api/JobTypes/41205284
+                        title: null
+                        isTemplated: false
+                    _embedded: null
+
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      description: OAuth2 authorization code flow. Registration of the application (client_id, client_secret, redirect_uri) at support@plantyst.com.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://portal.plantyst.com/OAuth/Authorize
+          tokenUrl: https://portal.plantyst.com/api/OAuth/Token
+          refreshUrl: https://portal.plantyst.com/api/OAuth/Token
+          scopes: {}
+    basicApiKey:
+      type: http
+      scheme: basic
+      description: "HTTP Basic authentication with the API key: username is the user's email, password is the API key."
+    apiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-KEY
+      description: The API key passed in a custom header.
+    apiKeyQuery:
+      type: apiKey
+      in: query
+      name: api_key
+      description: The API key passed in the query string. Useful for quick tests, but avoid it in production integrations because URLs tend to end up in logs.
+
+  schemas:
+    AuthorizationCodeTokenRequest:
+      type: object
+      title: Authorization code
+      required: [grant_type, code, redirect_uri, client_id, client_secret]
+      properties:
+        grant_type:
+          type: string
+          enum: [authorization_code]
+        code:
+          type: string
+          description: Temporary authorization code from the first step.
+        redirect_uri:
+          type: string
+          description: redirect_uri of the application.
+        client_id:
+          type: string
+          description: client_id of the application.
+        client_secret:
+          type: string
+          description: client_secret of the application.
+
+    RefreshTokenRequest:
+      type: object
+      title: Refresh token
+      required: [grant_type, refresh_token, client_id, client_secret]
+      properties:
+        grant_type:
+          type: string
+          enum: [refresh_token]
+        refresh_token:
+          type: string
+          description: The refresh token returned with the previous access token.
+        client_id:
+          type: string
+          description: client_id of the application.
+        client_secret:
+          type: string
+          description: client_secret of the application.
+
+    AuthorizationToken:
+      type: object
+      properties:
+        token_type:
+          type: string
+          description: The type of the token; always "Bearer".
+        access_token:
+          type: string
+          description: The JWT token used to authorize API requests.
+        expires_in:
+          type: integer
+          description: The number of seconds until the access token expires.
+        refresh_token:
+          type: string
+          description: The token used to obtain a new access token when the current one expires.
+
+    OAuthError:
+      type: object
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, invalid_client, invalid_grant, unsupported_grant_type]
+
+    ApiMessage:
+      type: object
+      properties:
+        Message:
+          type: string
+
+    CommandLocation:
+      type: object
+      properties:
+        location:
+          type: string
+          description: Specifies the relative URL with the result of the requested operation.
+
+    HalLink:
+      type: object
+      properties:
+        href:
+          type: string
+
+    HalLinks:
+      type: object
+      description: HAL links of the resource. A relation with a single link is serialized as an object, a relation with multiple links as an array of link objects.
+      additionalProperties: true
+
+    MeasurementList:
+      type: object
+      properties:
+        _links:
+          type: object
+          properties:
+            self:
+              $ref: "#/components/schemas/HalLink"
+        _embedded:
+          type: object
+          properties:
+            timezone:
+              type: array
+              description: Timezones referenced by the measurements.
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: The time zone identifier.
+                  name:
+                    type: string
+                    description: The time zone full name.
+                  iana:
+                    type: string
+                    description: The time zone IANA code.
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+            tag:
+              type: array
+              description: Tags created and assigned to the measurements.
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: The tag identifier.
+                  title:
+                    type: string
+                    description: The tag title.
+                  color:
+                    type: string
+                    description: The tag color represented as a hexadecimal color value.
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+            measurementDataVersion:
+              type: array
+              description: Versions of various measurement-related data.
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: The data version identifier.
+                  title:
+                    type: string
+                    description: The data type title.
+                  lastModified:
+                    type: string
+                    format: date-time
+                    description: The date and time of the last data modification.
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+            measurementCustomField:
+              type: array
+              description: Custom fields assigned to the measurements.
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    description: The custom field identifier.
+                  key:
+                    type: string
+                    description: The custom field key.
+                  value:
+                    type: string
+                    description: The custom field value.
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+            hierarchicalLocation:
+              type: array
+              description: Hierarchical locations of the measurements.
+              items:
+                type: object
+                properties:
+                  hierarchicalLocationId:
+                    type: integer
+                    description: The hierarchical location identifier.
+                  title:
+                    type: string
+                    description: The location title.
+                  shortTitle:
+                    type: string
+                    description: The location short title.
+                  level:
+                    type: string
+                    description: The position of the location in the hierarchy tree.
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+            measurement:
+              type: array
+              description: The array of Measurement objects.
+              items:
+                $ref: "#/components/schemas/Measurement"
+
+    # Internal-only measurement properties, intentionally not documented
+    # (returned by the API, but intended for the Portal frontend; third
+    # parties should ignore them):
+    # * baseTitle - title of the measurement without the location/machine-number prefixes
+    # * shiftEndDowntimeAction - what happens to a downtime running at the end of a shift (Continue/Terminate/Split)
+    # * commandGuid - the identifier of the command that created or last updated the measurement
+    # * prefixLabel - user-defined prefix (machine number) displayed before the measurement title
+    # * isHierarchicalLocationHiddenInTitle - whether the hierarchical location prefix is hidden in the title
+    Measurement:
+      type: object
+      properties:
+        measurementId:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+        quantityType:
+          type: string
+          enum: [speed, rate, stroke, time, temperature, humidity, power, flow, workload, rotation]
+        archived:
+          type: boolean
+        first:
+          type: string
+          format: date-time
+        rights:
+          type: array
+          items:
+            type: string
+            enum: [View, Contributor, DataAdmin, Admin, Owner]
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+
+  responses:
+    Unauthorized:
+      description: Authorization has been denied for this request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiMessage"
+          example:
+            Message: Authorization has been denied for this request.
+    Forbidden:
+      description: Forbidden.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiMessage"
+          example:
+            Message: Forbidden.
+    NotFound:
+      description: Not Found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiMessage"
+          example:
+            Message: Not Found.
+    MetadocumentCommandAccepted:
+      description: The relative URL with the result of the requested operation.
+      content:
+        application/hal+json:
+          schema:
+            $ref: "#/components/schemas/CommandLocation"
+          example:
+            location: Api/MetadocumentCommandResults/b2ec82f2-1438-47cd-a982-6b2e3b0476c7
