@@ -5,58 +5,141 @@ HOST: https://portal.plantyst.com/api/
 
 Plantyst Portal API is a REST API designed to access data related to customer measurements like basic time series, metrics or annotations.
 
-Some API responses use the HAL convention. HAL (Hypertext Application Language) is an standard convention for defining hypermedia such as links to external resources within JSON or XML code. The standard was initially proposed on June 2012 specifically for use with JSON and has since become available in two variations, JSON and XML. The two associated MIME types are media type: application/hal+xml and media type application/hal+json. See also https://en.wikipedia.org/wiki/Hypertext_Application_Language.
+Some API responses use the HAL convention. HAL (Hypertext Application Language) is a standard convention for defining hypermedia such as links to external resources within JSON or XML code. The standard was initially proposed in June 2012 specifically for use with JSON and has since become available in two variations, JSON and XML. The two associated MIME types are media type application/hal+xml and media type application/hal+json. See also https://en.wikipedia.org/wiki/Hypertext_Application_Language.
 
-# Group OAuth2 Authorization
+To receive responses in the HAL format, send the `Accept: application/hal+json` header with the request. Without this header, the same data are returned in an alternative plain JSON serialization (embedded collections as top-level properties and `_links` as an array of link objects). The examples in this documentation show the HAL format.
 
-The authorization for the API calls uses token-based principle _JWT_ (_JSON Web Token_). The token has three main parts:
+In HAL responses, a relation with a single link is serialized as an object, while a relation with multiple links is serialized as an array of link objects.
 
-The OAuth2 workflow is designed to acquire a user token for the access to user resources in Plantyst through the public Api. The token serves as the authorization mechanism for the third party applications. The application needs to be registered in the Plantyst system, having its own client_id, client_secret and redirect_uri properties (to register new application, please contact us at [support@plantyst.com](mailto:support@plantyst.com). To get the access token, the application has to begin by redirecting the user to the following URL:
+# Group Authorization
+
+The API supports two authorization mechanisms:
+
+* __OAuth2__ - bearer tokens in the _JWT_ (_JSON Web Token_) format, obtained through the OAuth2 authorization code flow described below; intended for third party applications acting on behalf of a Plantyst user
+* __API key__ - a per-user secret key; intended for server-to-server integrations
+
+Credentials for both mechanisms (`client_id`, `client_secret` and `redirect_uri` for OAuth2, the API key) are issued on request at [support@plantyst.com](mailto:support@plantyst.com).
+
+__Note:__ When a request is not authenticated (missing or invalid credentials), the server currently responds with a `302` redirect to the login page instead of a plain `401`. API clients should disable automatic redirect following and treat a `302` on an API URL as an authentication failure. The `401` responses documented below describe the intended semantics.
+
+## API key authorization
+
+The API key is bound to a specific Plantyst user and may have a limited validity period. The key can be passed with the request in one of the following ways:
+
+* __HTTP Basic authentication__ - the `Authorization` header with the `Basic` scheme, where the username is the user's email and the password is the API key: `Authorization: Basic {base64(email:api_key)}`
+* __Custom header__ - the `X-API-KEY` header: `X-API-KEY: {api_key}`
+* __Query string__ - the `api_key` parameter appended to the request URL: `https://portal.plantyst.com/api/Measurements?api_key={api_key}`; useful for quick tests, but avoid it in production integrations because URLs tend to end up in logs
+
+## OAuth2 authorization
+
+The OAuth2 workflow is designed to acquire a user token for the access to user resources in Plantyst through the public API. The token serves as the authorization mechanism for third party applications. The application needs to be registered in the Plantyst system, having its own `client_id`, `client_secret` and `redirect_uri` properties.
+
+The acquired access token is passed with every API request in the `Authorization` header:
+
+```
+Authorization: Bearer {access_token}
+```
 
 ## OAuth login
 
 ### Get login page [GET]
-To fet the login page, application has to redirect the user to the following URL: [https://portal.plantyst.com/OAuth/Authorize?client_id={client_id}&response_type=code&redirect_uri={url_encoded_redirect_uri}&state={optional_state_string}](https://portal.plantyst.com/OAuth/Authorize?client_id={client_id}&response_type=code&redirect_uri={url_encoded_redirect_uri}&state={optional_state_string}).
+To get the login page, the application has to redirect the user to the following URL: [https://portal.plantyst.com/OAuth/Authorize?client_id={client_id}&response_type=code&redirect_uri={url_encoded_redirect_uri}&state={optional_state_string}](https://portal.plantyst.com/OAuth/Authorize?client_id={client_id}&response_type=code&redirect_uri={url_encoded_redirect_uri}&state={optional_state_string}).
 Where the query string parameters are the following:
 * `client_id` - obtained during the registration process of the application
-* `response_type` - the type of the authorization flow; currently, Platnyst supports only „code“ type
-* `redirect_uri` - absolute URI to which the user will be redirect after successfull login
-* `state` - optional parameter, returned back to redirect URL
+* `response_type` - the type of the authorization flow; currently, Plantyst supports only the „code“ type
+* `redirect_uri` - absolute URI to which the user will be redirected after successful login
+* `state` - optional parameter, returned back to the redirect URL
 
 Once the user logs in and confirms the delegation of the rights to the third party application, the server redirects the user to the given redirect URL and adds the temporary authorization code to the response query string. The authorization code is valid for 5 minutes.
 
-In case of a login error, the next procedure is described in the RFC https://tools.ietf.org/html/rfc6749#section-4.2.2.1
+In case of a login error, the next procedure is described in the RFC https://tools.ietf.org/html/rfc6749#section-4.1.2.1
 
 + Parameters
     + client_id (string, `9sgfr867q`) - Obtained during the registration process of the application.
-    + response_type (string, `code`) - The type of the authorization flow; currently, Platnyst supports only „code“ type.
-    + redirect_uri (string, `https://URL`) - Absolute URI to which the user will be redirect after successfull login.
-    + state (string, `option`, optional) - Optional parameter, returned back to redirect URL.
+    + response_type (string, `code`) - The type of the authorization flow; currently, Plantyst supports only the „code“ type.
+    + redirect_uri (string, `https://URL`) - Absolute URI to which the user will be redirected after successful login.
+    + state (string, `option`, optional) - Optional parameter, returned back to the redirect URL.
 
 + Response 200 (application/json)
 
 ## JWT token [/OAuth/Token]
 
 ### Access token request [POST]
-To get the actual acces token, the client application sends a POST request to the server with the following parameters:
+To get the actual access token, the client application sends a POST request with `grant_type` set to `authorization_code` and the following parameters:
 * `grant_type` - "authorization_code"
-* `code` - temporary authorizaion code from the first step
+* `code` - temporary authorization code from the first step
 * `redirect_uri` - redirect_uri of the application
 * `client_id` - client_id of the application
 * `client_secret` - client_secret of the application
 
-The response of the server is the user authorization token (JWT token) that can be used to authorize Api requests by the given user and contains expires_in which is the number of seconds until the token expires.
-Refresh token is returned as well.
+The response of the server is the user authorization token (JWT token) that can be used to authorize API requests by the given user and contains `expires_in` which is the number of seconds until the token expires.
+A refresh token is returned as well.
 
-+ Request (application/json)
+__Refreshing the access token__
+
+When the access token expires, the application obtains a new one without user interaction by sending a POST request to the same URL with `grant_type` set to `refresh_token` and the following parameters:
+* `grant_type` - "refresh_token"
+* `refresh_token` - the refresh token returned with the previous access token
+* `client_id` - client_id of the application
+* `client_secret` - client_secret of the application
+
+Each successful refresh returns a new refresh token. The previous refresh token stays valid for 24 hours after the exchange, then it is discarded.
+
+In case of an error, the server responds with `400 Bad Request` and an `error` value according to [RFC 6749, section 5.2](https://tools.ietf.org/html/rfc6749#section-5.2): `invalid_request`, `invalid_client`, `invalid_grant` or `unsupported_grant_type`.
+
++ Request authorization code (application/json)
     + Attributes
         + `grant_type` (string, required) - "authorization_code"
-        + `code` (string, required) - temporary authorizaion code from the first step
+        + `code` (string, required) - temporary authorization code from the first step
         + `redirect_uri` (string, required) - redirect_uri of the application
         + `client_id` (string, required) - client_id of the application
         + `client_secret` (string, required) - client_secret of the application
 
 + Response 200 (application/json)
+    + Attributes
+        + `token_type` (string) - the type of the token; always "Bearer"
+        + `access_token` (string) - the JWT token used to authorize API requests
+        + `expires_in` (number) - the number of seconds until the access token expires
+        + `refresh_token` (string) - the token used to obtain a new access token when the current one expires
+
+    + Body
+
+            {
+                "token_type": "Bearer",
+                "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJDbGllbnRJZCI6...",
+                "expires_in": 86400,
+                "refresh_token": "3RZm2h56Sr1JB7dQxbC0T4Wu9pKfMv8jYgNaLeXsIoE="
+            }
+
++ Request refresh token (application/json)
+    + Attributes
+        + `grant_type` (string, required) - "refresh_token"
+        + `refresh_token` (string, required) - the refresh token returned with the previous access token
+        + `client_id` (string, required) - client_id of the application
+        + `client_secret` (string, required) - client_secret of the application
+
++ Response 200 (application/json)
+    + Attributes
+        + `token_type` (string) - the type of the token; always "Bearer"
+        + `access_token` (string) - the JWT token used to authorize API requests
+        + `expires_in` (number) - the number of seconds until the access token expires
+        + `refresh_token` (string) - the new refresh token replacing the previous one
+
+    + Body
+
+            {
+                "token_type": "Bearer",
+                "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJDbGllbnRJZCI6...",
+                "expires_in": 86400,
+                "refresh_token": "9kQw1h56Sr1JB7dQxbC0T4Wu9pKfMv8jYgNaLeXsIoE="
+            }
+
++ Response 400 (application/json)
+    + Body
+
+            {
+                "error": "invalid_grant"
+            }
 
 # Group Measurements
 
@@ -65,245 +148,255 @@ This section contains endpoints for the resources related to measurements and th
 * `measurementId` - unique identifier of the measurement
 * `title` - title of the measurement
 * `description` - additional description for the measurement
-* `quantityType` - type of the measured quantity
+* `quantityType` - type of the measured quantity; available values: `speed` (continuous production), `rate` (number of pieces), `stroke` (production cycle count), `time` (run time), `temperature`, `humidity`, `power`, `flow`, `workload`, `rotation`
 * `archived` - determines whether the measurement is archived
 * `first` - the date and time of the first collected data sample
 * `rights` - the array of current user access rights for the measurement
 
+<!--
+Internal-only measurement properties, intentionally not documented (returned by the API,
+but intended for the Portal frontend; third parties should ignore them):
+* baseTitle - title of the measurement without the location/machine-number prefixes
+* shiftEndDowntimeAction - what happens to a downtime running at the end of a shift (Continue/Terminate/Split)
+* commandGuid - the identifier of the command that created or last updated the measurement
+* prefixLabel - user-defined prefix (machine number) displayed before the measurement title
+* isHierarchicalLocationHiddenInTitle - whether the hierarchical location prefix is hidden in the title
+-->
+
 The rights used in the Plantyst application are the following:
 * _View_ - right to view measurement data
-* _Contributor_ - right to add or update additional information (like annotations)
-* _Admin_ - right to update measurement data (user access, tags, ...)
-* _Owner_ - same as Admin, but the access rigths can't be revoked
+* _Contributor_ - right to create, update and delete records like annotations, jobs and downtimes
+* _DataAdmin_ - right to import job lists (JobTypes import) and to manage the measurement calendar
+* _Admin_ - right to update measurement configuration (user access, tags, downtime codes, ...)
+* _Owner_ - same as Admin, but the access rights can't be revoked
 
-## Measurements Collection [/Measurements/{?currentSubscriptionOnly}]
+The rights are hierarchical: each right includes all the lower ones (e.g. a user with the _DataAdmin_ right also has the _Contributor_ and _View_ rights). Endpoints in this documentation state the minimal required access right.
+
+## Measurements Collection [/Measurements/{?groupId,currentSubscriptionOnly}]
 
 ### List Measurements [GET]
 
-Gets the list of measurements for which the current user has the access rights for view or higher. 
+Gets the list of measurements for which the current user has the access rights for view or higher.
 
-Along with the measurements, additional data are sent as the embedded resources as follows:
+Required access right: _View_.
+
+Along with the measurements (the `measurement` relation), additional data are embedded in the response under the following relations:
 * `timezone` array of all distinct timezones assigned to measurements
 * `tag` array of all distinct tags assigned to measurements
 * `measurementDataVersion` array of measurement data versions
+* `measurementCustomField` array of all distinct custom fields assigned to measurements
+* `hierarchicalLocation` array of hierarchical locations the measurements belong to
 
 + Parameters
-    + currentSubscriptionOnly (boolean, `true`) - Determines whether all measurements or only measurements from the user's current subscription are returned.
+    + groupId (number, optional) - Identifier of a hierarchical location group. When specified, only measurements within the hierarchy of the given group are returned and the `currentSubscriptionOnly` parameter is ignored.
+    + currentSubscriptionOnly (boolean, `true`, optional) - Determines whether all measurements or only measurements from the user's current subscription are returned.
+        + Default: `true`
 
 + Response 200 (application/hal+json)
     + Attributes
-        + `timeZones` (array) - timezones referenced by the measurements
-            + (object)
-                + `id` (string) - the time zone identifier
-                + `name` (string) - the time zone full name
-                + `iana` (string) - the time zone IANA codeMe
-        + `tags` (array) - tags created and assigned to the measurements
-            + (object)
-                + `id` (number) - the tag identifier
-                + `title` (string) - the tag title
-                + `color` (string) - the tag color represented hexadecimal color values
-        + `dataVersions` (array) - versions of various measurement-related data
-            + (object)
-                + `id` (number) - the data version identifier
-                + `title` (string) - the data type tile
-                + `lastModified` (string) - the date and time of the last data modification
-        + `resourceList` (array) - the array of _Measurement_ objects
-            + (object)
-                + `measurementId` (string)
-                + `title` (string)
-                + `description` (string)
-                + `quantityType` (string)
-                + `archived` (boolean)
-                + `first` (string)
-                + `rights` (array)
-                    + (string) - assigned right
+        + `_links` (object)
+            + `self` (object)
+                + `href` (string)
+        + `_embedded` (object)
+            + `timezone` (array) - timezones referenced by the measurements
+                + (object)
+                    + `id` (string) - the time zone identifier
+                    + `name` (string) - the time zone full name
+                    + `iana` (string) - the time zone IANA code
+            + `tag` (array) - tags created and assigned to the measurements
+                + (object)
+                    + `id` (string) - the tag identifier
+                    + `title` (string) - the tag title
+                    + `color` (string) - the tag color represented as a hexadecimal color value
+            + `measurementDataVersion` (array) - versions of various measurement-related data
+                + (object)
+                    + `id` (string) - the data version identifier
+                    + `title` (string) - the data type title
+                    + `lastModified` (string) - the date and time of the last data modification
+            + `measurementCustomField` (array) - custom fields assigned to the measurements
+                + (object)
+                    + `id` (number) - the custom field identifier
+                    + `key` (string) - the custom field key
+                    + `value` (string) - the custom field value
+            + `hierarchicalLocation` (array) - hierarchical locations of the measurements
+                + (object)
+                    + `hierarchicalLocationId` (number) - the hierarchical location identifier
+                    + `title` (string) - the location title
+                    + `shortTitle` (string) - the location short title
+                    + `level` (string) - the position of the location in the hierarchy tree
+            + `measurement` (array) - the array of _Measurement_ objects
+                + (object)
+                    + `measurementId` (number)
+                    + `title` (string)
+                    + `description` (string)
+                    + `quantityType` (string)
+                    + `archived` (boolean)
+                    + `first` (string)
+                    + `rights` (array)
+                        + (string) - assigned right
     + Body
-
             {
-                "timeZones": [
-                    {
-                        "id": "Central Europe Standard Time",
-                        "name": "(UTC+01:00) Belgrade, Bratislava, Budapest, Ljubljana, Prague",
-                        "iana": "Europe/Prague",
-                        "_links": [
-                            {
-                                "rel": "self",
-                                "href": "~/Api/TimeZone/Central%20Europe%20Standard%20Time",
-                                "title": null,
-                                "isTemplated": false
-                            }
-                        ],
-                    "_embedded": null
+                "_links": {
+                    "self": {
+                        "href": "/Api/Measurements"
                     }
-                ],
-                "tags": [
-                    {
-                        "id": "83",
-                        "title": "Technology",
-                        "color": "#E67E22",
-                        "_links": [
-                            {
-                                "rel": "self",
-                                "href": "~/Api/Tag/83",
-                                "title": null,
-                                "isTemplated": false
-                            }
-                        ],
-                        "_embedded": null
-                    },
-                    {
-                        "id": "82",
-                        "title": "Shop 1",
-                        "color": "#1ABC9C",
-                        "_links": [
-                            {
-                                "rel": "self",
-                                "href": "~/Api/Tag/82",
-                                "title": null,
-                                "isTemplated": false
-                            }
-                        ],
-                        "_embedded": null
-                    }
-                ],
-                "dataVersions": [
-                    {
-                        "id": "414",
-                        "title": "TimeSeries",
-                        "lastModified": "2016-10-25T16:05:00Z",
-                        "_links": [
-                            {
-                                "rel": "self",
-                                "href": "~/Api/MeasurementDataVersion/414",
-                                "title": null,
-                                "isTemplated": false
-                            }
-                        ],
-                        "_embedded": null
-                    },
-                    {
-                        "id": "415",
-                        "title": "TimeSeries",
-                        "lastModified": "2016-10-25T16:05:00Z",
-                        "_links": [
-                            {
-                                "rel": "self",
-                                "href": "~/Api/MeasurementDataVersion/415",
-                                "title": null,
-                                "isTemplated": false
-                            }
-                        ],
-                        "_embedded": null
-                    }
-                ],
-                "resourceList": [
-                {
-                    "measurementId": 3,
-                    "title": "Stroj 1",
-                    "description": "Access for presentations",
-                    "quantityType": "speed",
-                    "archived": false,
-                    "first": "2016-01-01T00:00:00Z",
-                    "rights": [
-                        "Admin"
-                    ],
-                    "_links": [
-                        {
-                            "rel": "self",
-                            "href": "~/Api/Measurement/695",
-                            "title": null,
-                            "isTemplated": false
-                        },
-                        {
-                            "rel": "timezone",
-                            "href": "~/Api/TimeZone/Central%20Europe%20Standard%20Time",
-                            "title": null,
-                            "isTemplated": false
-                        },
-                        {
-                            "rel": "tags",
-                            "href": "~/Api/Tag/82",
-                            "title": null,
-                            "isTemplated": false
-                        },
-                        {
-                            "rel": "dataVersions",
-                            "href": "~/Api/MeasurementDataVersion/414",
-                            "title": null,
-                            "isTemplated": false
-                        }
-                ],
-                "_embedded": null
                 },
-                {
-                    "measurementId": 4,
-                    "title": "Stroj 2",
-                    "description": "Access for presentations",
-                    "quantityType": "speed",
-                    "archived": false,
-                    "first": "2016-01-01T00:00:00Z",
-                    "rights": [
-                        "Admin"
-                    ],
-                    "_links": [
+                "_embedded": {
+                    "timezone": [
                         {
-                            "rel": "self",
-                            "href": "~/Api/Measurement/696",
-                            "title": null,
-                            "isTemplated": false
-                        },
-                        {
-                            "rel": "timezone",
-                            "href": "~/Api/TimeZone/Central%20Europe%20Standard%20Time",
-                            "title": null,
-                            "isTemplated": false
-                        },
-                        {
-                            "rel": "tags",
-                            "href": "~/Api/Tag/83",
-                            "title": null,
-                            "isTemplated": false
-                        },
-                        {
-                            "rel": "dataVersions",
-                            "href": "~/Api/MeasurementDataVersion/415",
-                            "title": null,
-                            "isTemplated": false
+                            "id": "Central Europe Standard Time",
+                            "name": "(UTC+01:00) Belgrade, Bratislava, Budapest, Ljubljana, Prague",
+                            "iana": "Europe/Prague",
+                            "_links": {
+                                "self": {
+                                    "href": "/Api/TimeZone/Central%20Europe%20Standard%20Time"
+                                }
+                            }
                         }
                     ],
-                    "_embedded": null
-                    }
-                ],
-                "_links": [
-                    {
-                        "rel": "self",
-                        "href": "~/Api/Measurements",
-                        "title": null,
-                        "isTemplated": false
-                    }
-                ],
-                "_embedded": null
+                    "tag": [
+                        {
+                            "id": "83",
+                            "title": "Technology",
+                            "color": "#E67E22",
+                            "_links": {
+                                "self": {
+                                    "href": "/Api/Tag/83"
+                                }
+                            }
+                        },
+                        {
+                            "id": "82",
+                            "title": "Shop 1",
+                            "color": "#1ABC9C",
+                            "_links": {
+                                "self": {
+                                    "href": "/Api/Tag/82"
+                                }
+                            }
+                        }
+                    ],
+                    "measurementDataVersion": [
+                        {
+                            "id": "414",
+                            "title": "TimeSeries",
+                            "lastModified": "2016-10-25T16:05:00Z",
+                            "_links": {
+                                "self": {
+                                    "href": "/Api/MeasurementDataVersion/414"
+                                }
+                            }
+                        },
+                        {
+                            "id": "415",
+                            "title": "DowntimeCodes",
+                            "lastModified": "2016-10-25T16:05:00Z",
+                            "_links": {
+                                "self": {
+                                    "href": "/Api/MeasurementDataVersion/415"
+                                }
+                            }
+                        }
+                    ],
+                    "measurementCustomField": [
+                        {
+                            "id": 12,
+                            "key": "CostCenter",
+                            "value": "CC-100",
+                            "_links": {
+                                "self": {
+                                    "href": "/Api/MeasurementCustomField/12"
+                                }
+                            }
+                        }
+                    ],
+                    "hierarchicalLocation": [
+                        {
+                            "hierarchicalLocationId": 51,
+                            "title": "Hall A",
+                            "shortTitle": "A",
+                            "level": "/51/",
+                            "_links": {
+                                "self": {
+                                    "href": "/Api/HierarchicalLocations/51"
+                                }
+                            }
+                        }
+                    ],
+                    "measurement": [
+                        {
+                            "measurementId": 3,
+                            "title": "A | 01 | Machine 1",
+                            "description": "Main production line",
+                            "quantityType": "speed",
+                            "archived": false,
+                            "first": "2016-01-01T00:00:00Z",
+                            "rights": [
+                                "Admin"
+                            ],
+                            "_links": {
+                                "self": {
+                                    "href": "/Api/Measurement/3"
+                                },
+                                "timezone": {
+                                    "href": "/Api/TimeZone/Central%20Europe%20Standard%20Time"
+                                },
+                                "tags": {
+                                    "href": "/Api/Tag/82"
+                                },
+                                "dataVersions": [
+                                    {
+                                        "href": "/Api/MeasurementDataVersion/414"
+                                    },
+                                    {
+                                        "href": "/Api/MeasurementDataVersion/415"
+                                    }
+                                ],
+                                "customFields": {
+                                    "href": "/Api/MeasurementCustomField/12"
+                                },
+                                "hierarchicalLocation": {
+                                    "href": "/Api/HierarchicalLocations/51"
+                                }
+                            }
+                        },
+                        {
+                            "measurementId": 4,
+                            "title": "A | 02 | Machine 2",
+                            "description": "Main production line",
+                            "quantityType": "rate",
+                            "archived": false,
+                            "first": "2016-01-01T00:00:00Z",
+                            "rights": [
+                                "Admin"
+                            ],
+                            "_links": {
+                                "self": {
+                                    "href": "/Api/Measurement/4"
+                                },
+                                "timezone": {
+                                    "href": "/Api/TimeZone/Central%20Europe%20Standard%20Time"
+                                },
+                                "tags": {
+                                    "href": "/Api/Tag/83"
+                                },
+                                "dataVersions": {
+                                    "href": "/Api/MeasurementDataVersion/415"
+                                },
+                                "hierarchicalLocation": {
+                                    "href": "/Api/HierarchicalLocations/51"
+                                }
+                            }
+                        }
+                    ]
+                }
             }
 
-+ Response 401 (application/hal+json)
++ Response 401 (application/json)
     + Body
 
             {
-                "message":"Authorization has been denied for this request."
-            }
-
-+ Response 403  (application/hal+json)
-    + Body
-
-            {
-                "message":"Forbidden."
-            }
-
-+ Response 404  (application/hal+json)
-    + Body
-
-            {
-                "message":"Not Found."
+                "Message":"Authorization has been denied for this request."
             }
 
 # Group Measurement Data
@@ -314,7 +407,9 @@ This section describes the API endpoints for accessing the basic measurement dat
 
 ### List Measurement Time Series Aggregation [POST]
 
-Gets the list of Time Series Aggregation items for the given measurement.
+Gets the list of Time Series Aggregation items for the given measurements.
+
+Required access right: _View_.
 
 The request contains the definition of queries, each for one measurement. A required part of the query is the `View` parameter, which specifies the type of the data aggregation.
 Available values are:
@@ -330,20 +425,24 @@ For five output format items and two data samples, there will be ten data items 
 * `TimeSquareSum` - auxiliary value for the optimized data computations
 * `TimeSum` - auxiliary value for the optimized data computations
 * `TimeValueSum` - auxiliary value for the optimized data computations
-* `ValueSum` - specifies the overal (sum) value of the data item
+* `ValueSum` - specifies the overall (sum) value of the data item
+
+The output format depends on the requested view: `Base.MinuteSet` returns only `ValueSum`, the other views return all five values.
+
+The server responds with `400 Bad Request` when the payload is missing, a query has no `View`, or `Precision` is outside the range 0-15. When the user does not have access to all queried measurements, the server responds with `403 Forbidden`.
 
 + Request (application/json)
     + Headers
-    
+
             Authorization: Bearer
     + Attributes
         + Queries (array)
             + - (object)
                 + `MeasurementId` (number, required) - unique measurement identifier
-                + `From` (number, required) - UTC date and time in ISO 8061 format that specifies the lower bound of the data query
-                + `To` (number, required) - UTC date and time in ISO 8061 format that specifies the upper bound of the data query
+                + `From` (string, required) - UTC date and time in ISO 8601 format that specifies the inclusive lower bound of the data query
+                + `To` (string, required) - UTC date and time in ISO 8601 format that specifies the exclusive upper bound of the data query
                 + `View` (string, required) - specifies the requested time series type
-                + `Precision` (number, required) - specifies the number of precision of the returned values
+                + `Precision` (number, optional) - specifies the number of decimal places of the returned values (0-15); when omitted, an adaptive rounding is used
     + Body
 
             {
@@ -353,28 +452,28 @@ For five output format items and two data samples, there will be ten data items 
                         "From": "2017-06-01T00:00:00Z",
                         "To": "2017-06-01T00:09:00Z",
                         "View": "Base.MinuteSet",
-                        "Precision": "2"
+                        "Precision": 2
                     },
                     {
                         "MeasurementId": 4,
                         "From": "2017-05-31T21:00Z",
                         "To": "2017-05-31T23:00Z",
                         "View": "Base.Hour",
-                        "Precision": "2"
+                        "Precision": 2
                     }
                 ]
             }
 
-+ Response 200 (application/hal+json)
++ Response 200 (application/json)
     + Attributes
         + `results` (array)
             + (object)
-                + `query` (object)
-                    + `MeasurementId` (number)
-                    + `From` (number)
-                    + `To` (number)
-                    + `View` (string)
-                    + `Precision` (number)
+                + `query` (object) - the copy of the original query
+                    + `measurementId` (number)
+                    + `from` (string)
+                    + `to` (string)
+                    + `view` (string)
+                    + `precision` (number)
                 + `outputFormat` (array) - defines the interpretation for the `data` section
                 + `data` (array) - array of data items
                 + `first` (string) - UTC date and time of first returned data item in ISO 8601 format
@@ -386,21 +485,21 @@ For five output format items and two data samples, there will be ten data items 
                     {
                         "query": {
                             "view": "Base.MinuteSet",
-                            "precision": "2",
+                            "precision": 2,
                             "measurementId": 3,
-                            "from": "2017-05-31T22:00Z",
-                            "to": "2017-05-31T22:09Z"
+                            "from": "2017-06-01T00:00:00Z",
+                            "to": "2017-06-01T00:09:00Z"
                         },
                         "outputFormat": [
                             "ValueSum"
                         ],
                         "data":[0,0,3,10,11,10,9,11,10,7],
-                        "first":"2017-05-31Z22:00:00Z"
+                        "first":"2017-06-01T00:00:00Z"
                     },
                     {
                         "query": {
                             "view": "Base.Hour",
-                            "precision": "2",
+                            "precision": 2,
                             "measurementId": 4,
                             "from": "2017-05-31T21:00Z",
                             "to": "2017-05-31T23:00Z"
@@ -408,32 +507,22 @@ For five output format items and two data samples, there will be ten data items 
                         "outputFormat": [
                             "ItemCount", "TimeSquareSum", "TimeSum", "TimeValueSum", "ValueSum"
                         ],
-                        "data":[60,70210,1770,33352,1196,60,70210,1770,24442,963,60,70210,1770,45655,1512],
-                        "first":"2017-05-31Z22:00:00Z"
+                        "data":[60,70210,1770,33352,1196,60,70210,1770,24442,963],
+                        "first":"2017-05-31T21:00:00Z"
                     }
                 ]
             }
 
-+ Response 401 (application/hal+json)
++ Response 400
+
++ Response 401 (application/json)
     + Body
 
             {
-                "message":"Authorization has been denied for this request."
+                "Message":"Authorization has been denied for this request."
             }
 
-+ Response 403  (application/hal+json)
-    + Body
-
-            {
-                "message":"Forbidden."
-            }
-
-+ Response 404  (application/hal+json)
-    + Body
-
-            {
-                "message":"Not Found."
-            }
++ Response 403
 
 # Group Metadocuments
 
