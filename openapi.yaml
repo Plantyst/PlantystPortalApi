@@ -10,6 +10,8 @@ info:
     To receive responses in the HAL format, send the `Accept: application/hal+json` header with the request. Without this header, the same data are returned in an alternative plain JSON serialization (embedded collections as top-level properties and `_links` as an array of link objects). The examples in this documentation show the HAL format.
 
     In HAL responses, a relation with a single link is serialized as an object, while a relation with multiple links is serialized as an array of link objects.
+
+    Property names in request payloads are matched case-insensitively (e.g. `text` and `Text` are equivalent); the documentation uses the PascalCase form for requests and the camelCase form for responses, matching the server's own serialization.
   contact:
     name: Plantyst support
     email: support@plantyst.com
@@ -76,44 +78,43 @@ tags:
     description: This section describes the API endpoints for accessing the basic measurement data.
   - name: Metadocuments
     description: |
-      Resources related to metadocuments in the API. Metadocument is a general term for various types of measurement-related data like annotations, comments, jobs or downtime entries. Metadocument can be defined for a single time point or for time range. Metadocument has the following properties:
+      Resources related to metadocuments in the API. Metadocument is a general term for various types of measurement-related records. The `type` of the metadocument determines its meaning:
 
-      * `Guid` - unique identifier of the metadocument (mandatory)
-      * `MeasurementId` - identifier of the measurement to which the metadocument belongs (mandatory)
-      * `Type` - type of the metadocument (mandatory); available values:
-          * `0` - undefined type
-          * `1` - annotation
-          * `2` - job
-          * `3` - downtime
-      * `LastModified` - the date and time of the last modification in UTC
-      * `From` - start date and time in UTC
-      * `To` - end date and time in UTC; To can have a value or be null; if To is same as From, then it is a single time point metadocument; if To is greater than From, then it is a time range metadocument; If To is null, then it is unlimited metadocument
-      * `Title` - metadocument title
-      * `Description` - extended description, enables _MarkDown_ markup language
-      * `CustomId` - user-defined identifier
-      * `Color` - color in hex color code
-      * `Setpoint` - setpoint for the metadocument; represents the desired value for the measured quantity
-      * `DowntimeCode` - related downtime code identifier
-      * `CreatorId` - user identifier of the metadocument creator
-      * `Operations` - operations defined as the array of string values
-      * `ProductionEntries` - embeded array of information about producted items like entry time, amount, OK or NOT OK items
-      * `Users` - embeded array of information about users
-      * `LastModified` - the last modified date of the metadocument
-      * `DowntimeCodeKey` - down time code key
-      * `PlannedFrom` - planned from date
-      * `PlannedTo` - planned to date
-      * `CustomFields` - object with custom fields
-      * `Comments` - embeded array of comment objects
+      * `0` - general (undefined) type
+      * `1` - __annotation__ - a note attached to a time point or a time range
+      * `2` - __job__ - a production job (work order) executed on the measurement
+      * `3` - __downtime__ - a downtime interval, optionally classified by a downtime code
 
-      A metadocument comment is a self-contained data type with the following properties:
+      A metadocument is defined for a single time point (`to` equals `from`), for a time range (`to` greater than `from`), or as unlimited (`to` is `null` - e.g. a job or downtime that is still running).
 
-      * `Id` - identifier of the comment; unique within the metadocument
-      * `Text` - comment text
-      * `ModificationTime` - UTC date and time of the last modification
+      __Best practice per metadocument type__
+
+      * __downtime__ (`3`) - set only `DowntimeCodeKey` and leave `Title` empty. The UI displays the description of the downtime code from the downtime code dictionary, so a later change of the description in the dictionary propagates to all downtimes. Setting `Title` directly would freeze the text in each metadocument.
+      * __job__ (`2`) - use `Title` (and the job-related properties); do not use `DowntimeCodeKey`.
+      * __annotation__ (`1`) - no title is needed; typically only the comment text (`Text`) is set.
 
       __Command-based architecture__
 
-      All operations over metadocuments that change their state are command-based, therefore the response for such actions is formed as the relative link to the location, where the result of the request should be checked.
+      All operations that change the state of metadocuments are asynchronous commands. The server responds with `202 Accepted` and a body with the relative URL (`location`) of the command result. Poll the command result URL until the `result` reaches one of the final states:
+
+      * `Waiting` / `InProgress` - the command is queued or being processed
+      * `Success` - the command completed successfully
+      * `Conflict` - the optimistic concurrency check failed (the metadocument was modified in the meantime, see the ETag note below)
+      * `DataError` - the command data are invalid
+      * `Failed` - the command processing failed
+      * `AlreadyApplied` - the same command was already applied
+
+      __Optimistic concurrency__
+
+      Every metadocument carries an `eTag`. The update and delete operations accept an optional ETag value; when it is provided and the metadocument has been modified in the meantime, the command finishes with the `Conflict` result.
+
+      __Command custom identifier__
+
+      Every command operation accepts an optional `commandCustomId` query parameter - a client-supplied identifier of the command. The command result can later be looked up with `GET /MetadocumentCommandResults?commandCustomId={id}` (useful when the response with the command location was lost).
+
+      __Access rights__
+
+      Reading metadocuments requires the _View_ right; creating, updating and deleting requires the _Contributor_ right. Metadocuments marked `readOnly` and properties locked by another user (`locks`) cannot be modified; users with the _Admin_ right bypass the locks. Comments can be updated only by their author; deleting another user's comment requires the _Admin_ right.
   - name: CSV file with JOBs
     description: |
       To upload a CSV with JOBs you need an access token and CSV file according to the following specification: coding UTF-8, separated by commas and containing header. We will prepare this access token for you (please contact us at support@plantyst.com).
@@ -520,126 +521,127 @@ paths:
           description: The user does not have access to all queried measurements. The response has an empty body.
 
   # ---------------------------------------------------------------------------
-  # Metadocuments — content converted 1:1 from apiary.apib; will be updated
-  # against the current code state in a follow-up documentation group.
+  # Metadocuments
   # ---------------------------------------------------------------------------
   /Metadocuments:
-    post:
-      operationId: addMetadocument
+    get:
+      operationId: findMetadocumentsByCustomId
       tags: [Metadocuments]
-      summary: Add Metadocument
-      description: Adds metadocument of given type for the specific measurement.
-      requestBody:
-        required: true
-        content:
-          application/hal+json:
-            schema:
-              type: object
-              required: [MeasurementId, Type, From]
-              properties:
-                MeasurementId:
-                  type: integer
-                Type:
-                  type: integer
-                From:
-                  type: string
-                  format: date-time
-                To:
-                  type: [string, "null"]
-                  format: date-time
-                Title:
-                  type: string
-                Description:
-                  type: string
-                CustomId:
-                  type: string
-                Setpoint:
-                  type: number
-                Color:
-                  type: string
-                Operations:
-                  type: array
-                  items:
-                    type: string
-                CustomFields:
-                  type: array
-                  items: {}
-                DowntimeCode:
-                  type: string
-                DowntimeCodeKey:
-                  type: string
-                PlannedFrom:
-                  type: string
-                  format: date-time
-                PlannedTo:
-                  type: string
-                  format: date-time
+      summary: Find Metadocuments by custom identifier
+      description: |
+        Gets the metadocuments identified by the combination of `measurementId` and `customId`.
+
+        Required access right: _View_.
+      parameters:
+        - name: measurementId
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: The measurement identifier.
+        - name: customId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The user-defined identifier of the metadocument.
       responses:
         "200":
-          $ref: "#/components/responses/MetadocumentCommandAccepted"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-    patch:
-      operationId: patchMetadocument
-      tags: [Metadocuments]
-      summary: Patch Metadocument
-      description: Updates the metadocument with specific Guid and given parameters.
-      requestBody:
-        required: true
-        content:
-          application/hal+json:
-            schema:
-              type: object
-              required: [Guid]
-              properties:
-                Guid:
-                  type: string
-                MeasurementId:
-                  type: integer
-                From:
-                  type: string
-                  format: date-time
-                To:
-                  type: [string, "null"]
-                  format: date-time
-                Title:
-                  type: string
-                Description:
-                  type: string
-                CustomId:
-                  type: string
-                Setpoint:
-                  type: number
-                Color:
-                  type: string
-                Operations:
-                  type: array
-                  items:
-                    type: string
-                CustomFields:
-                  type: array
-                  items: {}
-                DowntimeCode:
-                  type: string
-                DowntimeCodeKey:
-                  type: string
-                PlannedFrom:
-                  type: string
-                  format: date-time
-                PlannedTo:
-                  type: string
-                  format: date-time
-      responses:
-        "200":
-          $ref: "#/components/responses/MetadocumentCommandAccepted"
+          description: The metadocuments with the given custom identifier and the related users.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+                  _embedded:
+                    type: object
+                    properties:
+                      metadocument:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Metadocument"
+                      user:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UserSummary"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: No metadocument with the given custom identifier exists.
+    post:
+      operationId: addMetadocument
+      tags: [Metadocuments]
+      summary: Add Metadocument
+      description: |
+        Adds a metadocument of the given type for the specific measurement.
+
+        Required access right: _Contributor_.
+
+        The optional `Text` property creates the first comment of the metadocument in the same command (with `CommentTime` as its time, when provided).
+      parameters:
+        - name: tryMergeWithExisting
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When `true`, the server tries to merge the metadocument with an existing overlapping one instead of creating a new one.
+        - name: allowMultiple
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When `true`, allows multiple metadocuments with the same `CustomId` and `MeasurementId` to be inserted.
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MetadocumentCreate"
+            examples:
+              downtime:
+                summary: Downtime classified by a downtime code (no Title - the UI shows the dictionary description of the code)
+                value:
+                  MeasurementId: 3
+                  Type: 3
+                  From: "2026-07-01T05:30:00Z"
+                  To: "2026-07-01T07:30:00Z"
+                  DowntimeCodeKey: "144"
+                  CustomFields:
+                    SourceId: ext-123
+              job:
+                summary: Job (work order) with a title
+                value:
+                  MeasurementId: 3
+                  Type: 2
+                  From: "2026-07-01T05:30:00Z"
+                  To: null
+                  Title: Order 2026-0042
+                  WorkOrderNumber: WO-2026-0042
+                  TargetAmount: 100
+              annotation:
+                summary: Annotation with the first comment
+                value:
+                  MeasurementId: 3
+                  Type: 1
+                  From: "2026-07-01T05:30:00Z"
+                  To: "2026-07-01T05:30:00Z"
+                  Text: Material batch changed
+      responses:
+        "202":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /Metadocuments/{guid}:
     parameters:
@@ -648,15 +650,127 @@ paths:
         required: true
         schema:
           type: string
+          format: uuid
         example: e2dd39dc-5389-43b9-b855-426af762811f
-        description: Unique identifier for the metadocument.
+        description: Unique identifier of the metadocument.
+    get:
+      operationId: getMetadocument
+      tags: [Metadocuments]
+      summary: Get Metadocument
+      description: |
+        Gets the metadocument with the specific Guid, with embedded comments, production entries and related users.
+
+        Required access right: _View_.
+      responses:
+        "200":
+          description: The metadocument with embedded related resources.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/Metadocument"
+              example:
+                guid: 27a858a0-c244-4640-83f8-513dbc70c2e6
+                type: 3
+                creatorId: 497
+                measurementId: 3
+                from: "2026-07-01T05:30:00Z"
+                to: "2026-07-01T07:30:00Z"
+                color: "#969614"
+                downtimeCode: "144"
+                downtimeCodeKey: "144"
+                eTag: "\"2f007274-0000-0d00-0000-6a4e18d80000\""
+                customFields:
+                  SourceId: ext-123
+                lastModified: "2026-07-01T09:25:15Z"
+                _links:
+                  self:
+                    href: /Api/Metadocuments/27a858a0-c244-4640-83f8-513dbc70c2e6
+                  user:
+                    href: /Api/Users/497
+                _embedded:
+                  comment:
+                    - id: 1
+                      text: Comment text
+                      modificationTime: "2026-07-01T11:52:12Z"
+                      _links:
+                        self:
+                          href: /Api/Metadocuments/27a858a0-c244-4640-83f8-513dbc70c2e6/Comments/1/
+                        user:
+                          href: /Api/Users/497
+                  productionEntry:
+                    - id: 1
+                      time: "2026-07-01T07:00:00Z"
+                      value: 120
+                      type: OK
+                      note: First batch
+                      _links:
+                        self:
+                          href: /Api/Metadocuments/27a858a0-c244-4640-83f8-513dbc70c2e6/ProductionEntries/1/
+                        user:
+                          href: /Api/Users/497
+                  user:
+                    - userId: 497
+                      name: Martin Kouďa
+                      _links:
+                        self:
+                          href: /Api/Users/497
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: patchMetadocument
+      tags: [Metadocuments]
+      summary: Patch Metadocument
+      description: |
+        Updates the metadocument with the specific Guid. Only the properties present in the payload are changed.
+
+        Required access right: _Contributor_ (see the group description for `readOnly` and `locks` restrictions).
+
+        The optional `ETag` property enables the optimistic concurrency check: when the metadocument has been modified in the meantime, the command finishes with the `Conflict` result. The server responds with `400 Bad Request` when the patch does not change anything or would leave the metadocument without content.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MetadocumentUpdate"
+            example:
+              DowntimeCodeKey: "144"
+              To: "2026-07-01T08:00:00Z"
+              ETag: "\"2f007274-0000-0d00-0000-6a4e18d80000\""
+      responses:
+        "202":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "400":
+          description: The payload is invalid, does not change anything, or would leave the metadocument without content.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteMetadocument
       tags: [Metadocuments]
       summary: Delete Metadocument
-      description: Deletes the metadocument with specific Guid.
+      description: |
+        Deletes the metadocument with the specific Guid.
+
+        Required access right: _Contributor_ (see the group description for `readOnly` and `locks` restrictions).
+      parameters:
+        - name: etag
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional ETag of the metadocument for the optimistic concurrency check.
+        - $ref: "#/components/parameters/CommandCustomId"
       responses:
-        "200":
+        "202":
           $ref: "#/components/responses/MetadocumentCommandAccepted"
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -664,85 +778,128 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-    get:
-      operationId: getMetadocument
+
+  /Metadocuments/{guid}/Comments:
+    parameters:
+      - name: guid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: Unique identifier of the metadocument.
+    post:
+      operationId: addMetadocumentComment
       tags: [Metadocuments]
-      summary: Get Metadocument
-      description: Gets metadocument with specific Guid with embedded comments.
+      summary: Add Metadocument Comment
+      description: |
+        Adds a comment to the specific metadocument.
+
+        Required access right: _Contributor_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [Text]
+              properties:
+                Text:
+                  type: string
+                  maxLength: 500
+                  description: The comment text.
+                Time:
+                  type: string
+                  format: date-time
+                  description: The comment time; when omitted, the current UTC time is used.
+            example:
+              Text: Comment text.
       responses:
-        "200":
-          description: The metadocument with embedded comments.
-          content:
-            application/hal+json:
-              schema:
-                type: object
-                properties:
-                  guid:
-                    type: string
-                  type:
-                    type: integer
-                  title:
-                    type: string
-                  creatorId:
-                    type: integer
-                  measurementId:
-                    type: integer
-                  from:
-                    type: string
-                    format: date-time
-                  to:
-                    type: [string, "null"]
-                    format: date-time
-                  color:
-                    type: string
-                  setpoint:
-                    type: number
-                  lastModified:
-                    type: string
-                    format: date-time
-                  _links:
-                    type: object
-                  _embedded:
-                    type: object
-                    properties:
-                      comment:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            id:
-                              type: integer
-                            text:
-                              type: string
-                            modificationTime:
-                              type: string
-                              format: date-time
-                            _links:
-                              type: object
-              example:
-                guid: 27a858a0-c244-4640-83f8-513dbc70c2e6
-                type: 3
-                title: Downtime title
-                creatorId: 497
-                measurementId: 3
-                from: "2017-06-26T05:30:00Z"
-                to: "2017-06-26T07:30:00Z"
-                color: "#969614"
-                setpoint: 50.0
-                lastModified: "2017-06-26T09:25:15Z"
-                _links:
-                  self:
-                    href: /Api/Metadocuments/27a858a0-c244-4640-83f8-513dbc70c2e6
-                _embedded:
-                  comment:
-                    - id: 1
-                      text: Comment text
-                      modificationTime: "2017-07-19T11:52:12Z"
-                      _links:
-                        self:
-                          href: /Api/Metadocuments/27a858a0-c244-4640-83f8-513dbc70c2e6/Comments/1/
-                        user:
-                          href: /Api/User/101
+        "202":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "400":
+          description: The payload is invalid (`Text` is required, at most 500 characters).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: patchMetadocumentComment
+      tags: [Metadocuments]
+      summary: Patch Metadocument Comment
+      description: |
+        Updates the comment with the specific `Id` of the given metadocument.
+
+        Required access right: _Contributor_; only the author of the comment can update it.
+
+        __Note:__ Updating a comment assigns it a new `id` (the `id` identifies the comment and its version). Re-read the metadocument to get the current `id` before a subsequent update or delete.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [Id, Text]
+              properties:
+                Id:
+                  type: integer
+                  description: The identifier of the comment within the metadocument.
+                Text:
+                  type: string
+                  maxLength: 500
+                  description: The new comment text.
+                Time:
+                  type: string
+                  format: date-time
+                  description: The comment time; when omitted, the current UTC time is used.
+            example:
+              Id: 12
+              Text: Comment text.
+      responses:
+        "202":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "400":
+          description: The payload is invalid (`Text` is required, at most 500 characters).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /Metadocuments/{guid}/Comments/{id}:
+    delete:
+      operationId: deleteMetadocumentComment
+      tags: [Metadocuments]
+      summary: Delete Metadocument Comment
+      description: |
+        Deletes the comment of the specific metadocument. When the metadocument has no other content, it is deleted as well.
+
+        Required access right: _Contributor_; deleting another user's comment requires the _Admin_ right.
+      parameters:
+        - name: guid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Unique identifier of the metadocument.
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: The identifier of the comment within the metadocument.
+        - $ref: "#/components/parameters/CommandCustomId"
+      responses:
+        "202":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -757,65 +914,112 @@ paths:
         required: true
         schema:
           type: string
-        example: e2dd39dc-5389-43b9-b855-426af762811f
-        description: Unique identifier for the metadocument.
+          format: uuid
+        description: Unique identifier of the metadocument.
     post:
       operationId: addProductionEntry
       tags: [Metadocuments]
       summary: Add Production Entry
-      description: Adds production entry into metadocument.
+      description: |
+        Adds a production entry (produced amount record) into the metadocument.
+
+        Required access right: _Contributor_.
+
+        When the production entries of the metadocument are managed by a linked external source, the server responds with `405 Method Not Allowed`.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
         required: true
         content:
-          application/hal+json:
+          application/json:
             schema:
-              type: object
-              required: [Value, Type]
-              properties:
-                Value:
-                  type: number
-                Type:
-                  type: string
-                Note:
-                  type: string
-                Time:
-                  type: string
-                  format: date-time
+              $ref: "#/components/schemas/ProductionEntryCreate"
+            example:
+              Value: 120
+              Type: OK
+              Time: "2026-07-01T07:00:00Z"
       responses:
-        "200":
+        "202":
           $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "400":
+          description: The payload is invalid.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          description: The production entries of the metadocument are managed by a linked external source and cannot be modified directly.
     patch:
       operationId: patchProductionEntry
       tags: [Metadocuments]
       summary: Patch Production Entry
-      description: Updates the production entry with specific Id and given parameters.
+      description: |
+        Updates the production entry with the specific `Id` of the given metadocument. The entry is replaced as a whole - provide all its properties, including `Time` (when `Time` is omitted, the current UTC time is used, which fails with the `DataError` result for metadocuments in the past).
+
+        Required access right: _Contributor_.
+
+        __Note:__ Updating a production entry assigns it a new `id` (the `id` identifies the entry and its version). Re-read the metadocument to get the current `id` before a subsequent update or delete.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
         required: true
         content:
-          application/hal+json:
+          application/json:
             schema:
-              type: object
-              required: [Id, Value, Type]
-              properties:
-                Id:
-                  type: integer
-                Value:
-                  type: number
-                Type:
-                  type: string
-                Note:
-                  type: string
-                Time:
-                  type: string
-                  format: date-time
+              allOf:
+                - type: object
+                  required: [Id]
+                  properties:
+                    Id:
+                      type: integer
+                      description: The identifier of the production entry within the metadocument.
+                - $ref: "#/components/schemas/ProductionEntryCreate"
+            example:
+              Id: 1
+              Value: 150
+              Type: OK
       responses:
-        "200":
+        "202":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          description: The production entries of the metadocument are managed by a linked external source and cannot be modified directly.
+
+  /Metadocuments/{guid}/ProductionEntries/{id}:
+    delete:
+      operationId: deleteProductionEntry
+      tags: [Metadocuments]
+      summary: Delete Production Entry
+      description: |
+        Deletes the production entry of the specific metadocument. When the metadocument has no other content, it is deleted as well.
+
+        Required access right: _Contributor_.
+      parameters:
+        - name: guid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Unique identifier of the metadocument.
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: The identifier of the production entry within the metadocument.
+        - $ref: "#/components/parameters/CommandCustomId"
+      responses:
+        "202":
           $ref: "#/components/responses/MetadocumentCommandAccepted"
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -823,13 +1027,18 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "405":
+          description: The production entries of the metadocument are managed by a linked external source and cannot be modified directly.
 
   /MetadocumentsQuery:
     post:
-      operationId: getMetadocuments
+      operationId: queryMetadocuments
       tags: [Metadocuments]
       summary: Get Metadocuments
-      description: Gets the metadocuments for a given measurement and time range.
+      description: |
+        Gets the metadocuments for the given measurements and time ranges. The request may contain at most 100 queries.
+
+        Required access right: _View_ for every queried measurement (otherwise `403 Forbidden`).
       requestBody:
         required: true
         content:
@@ -839,6 +1048,7 @@ paths:
               properties:
                 Queries:
                   type: array
+                  maxItems: 100
                   items:
                     type: object
                     required: [MeasurementId, From, To]
@@ -854,11 +1064,11 @@ paths:
             example:
               Queries:
                 - MeasurementId: 3
-                  From: "2017-05-31T22:00:00Z"
-                  To: "2017-06-01T19:59:59Z"
+                  From: "2026-06-30T22:00:00Z"
+                  To: "2026-07-01T19:59:59Z"
       responses:
         "200":
-          description: The metadocuments with embedded comments and related users.
+          description: The metadocuments with related users.
           content:
             application/hal+json:
               schema:
@@ -870,69 +1080,23 @@ paths:
                   dateTime:
                     type: string
                     format: date-time
-                    description: UTC date and time in ISO 8601 format for which the response is up to date.
+                    description: UTC date and time for which the response is up to date.
                   _links:
-                    type: object
+                    $ref: "#/components/schemas/HalLinks"
                   _embedded:
                     type: object
                     properties:
                       user:
                         type: array
                         items:
-                          type: object
-                          properties:
-                            userId:
-                              type: integer
-                            name:
-                              type: string
-                            _links:
-                              type: object
+                          $ref: "#/components/schemas/UserSummary"
                       metadocument:
                         type: array
                         items:
-                          type: object
-                          properties:
-                            guid:
-                              type: string
-                            type:
-                              type: integer
-                            creatorId:
-                              type: integer
-                            measurementId:
-                              type: integer
-                            from:
-                              type: string
-                              format: date-time
-                            to:
-                              type: [string, "null"]
-                              format: date-time
-                            color:
-                              type: string
-                            lastModified:
-                              type: string
-                              format: date-time
-                            _links:
-                              type: object
-                            _embedded:
-                              type: object
-                              properties:
-                                comment:
-                                  type: array
-                                  items:
-                                    type: object
-                                    properties:
-                                      id:
-                                        type: integer
-                                      text:
-                                        type: string
-                                      modificationTime:
-                                        type: string
-                                        format: date-time
-                                      _links:
-                                        type: object
+                          $ref: "#/components/schemas/Metadocument"
               example:
                 responseContinuation: ""
-                dateTime: "2017-07-13T07:03:03.211009Z"
+                dateTime: "2026-07-11T07:03:03.211009Z"
                 _links:
                   self:
                     href: /Api/MetadocumentsQuery/
@@ -942,16 +1106,16 @@ paths:
                       name: Martin Kouďa
                       _links:
                         self:
-                          href: /Api/User/497
+                          href: /Api/Users/497
                   metadocument:
                     - guid: 13f6a3b3-0416-49e9-81ed-fab139518c0d
                       type: 1
                       creatorId: 497
                       measurementId: 3
-                      from: "2017-06-01T10:18:00Z"
-                      to: "2017-06-01T10:18:00Z"
-                      color: ""
-                      lastModified: "2017-07-04T07:48:34Z"
+                      from: "2026-07-01T10:18:00Z"
+                      to: "2026-07-01T10:18:00Z"
+                      eTag: "\"2f007274-0000-0d00-0000-6a4e18d80000\""
+                      lastModified: "2026-07-04T07:48:34Z"
                       _links:
                         self:
                           href: /Api/Metadocuments/13f6a3b3-0416-49e9-81ed-fab139518c0d
@@ -959,72 +1123,51 @@ paths:
                         comment:
                           - id: 0
                             text: Ahoj...
-                            modificationTime: "2017-07-03T12:00:56Z"
+                            modificationTime: "2026-07-03T12:00:56Z"
                             _links:
                               self:
                                 href: /Api/Metadocuments/13f6a3b3-0416-49e9-81ed-fab139518c0d/Comments/0/
                               user:
-                                href: /Api/User/497
-                          - id: 1
-                            text: Nazdar...
-                            modificationTime: "2017-07-04T07:48:41Z"
-                            _links:
-                              self:
-                                href: /Api/Metadocuments/13f6a3b3-0416-49e9-81ed-fab139518c0d/Comments/1/
-                              user:
-                                href: /Api/User/497
+                                href: /Api/Users/497
+        "400":
+          description: The payload is missing or contains more than 100 queries.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
 
   /MetadocumentCommandResults/{guid}:
     get:
       operationId: getMetadocumentCommandResult
       tags: [Metadocuments]
       summary: Get Metadocument Command Result
-      description: Gets the metadocument command result.
+      description: |
+        Gets the result of a metadocument command. Poll this endpoint until the `result` reaches one of the final states (see the group description).
       parameters:
         - name: guid
           in: path
           required: true
           schema:
             type: string
-          example: f57513ba-c004-45bc-b28c-610eb00de7c
-          description: Unique identifier for the metadocument command.
+            format: uuid
+          example: f57513ba-c004-45bc-b28c-610eb00de7cf
+          description: Unique identifier of the metadocument command.
       responses:
         "200":
           description: The metadocument command result.
           content:
             application/hal+json:
               schema:
-                type: object
-                properties:
-                  guid:
-                    type: string
-                    description: Unique identifier for the metadocument command.
-                  result:
-                    type: string
-                    description: Text representation of the result.
-                  processedDate:
-                    type: string
-                    format: date-time
-                    description: Processed date and time of the command in ISO 8601 format.
-                  metadocumentGuid:
-                    type: string
-                    description: Specifies identifier for the related metadocument.
-                  _links:
-                    type: object
+                $ref: "#/components/schemas/MetadocumentCommandResult"
               example:
-                guid: 27a858a0-c244-4640-83f8-513dbc70c2e6
+                guid: f57513ba-c004-45bc-b28c-610eb00de7cf
                 result: Success
-                processedDate: "2017-06-26T05:30:00Z"
-                metadocumentGuid: 2b8748ba-8830-4350-b68b-2599d53f2701
+                createdDate: "2026-07-01T05:29:58Z"
+                processedDate: "2026-07-01T05:30:00Z"
+                metadocumentGuid: 27a858a0-c244-4640-83f8-513dbc70c2e6
                 _links:
                   self:
-                    href: /Api/MetadocumentCommandResults/f57513ba-c004-45bc-b28c-610eb00de7c
+                    href: /Api/MetadocumentCommandResults/f57513ba-c004-45bc-b28c-610eb00de7cf
                   metadocument:
                     href: /Api/Metadocuments/27a858a0-c244-4640-83f8-513dbc70c2e6
         "401":
@@ -1034,91 +1177,27 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /Metadocuments/{guid}/Comments:
-    parameters:
-      - name: guid
-        in: path
-        required: true
-        schema:
-          type: string
-        description: Specifies the unique identifier for the metadocument.
-    post:
-      operationId: addMetadocumentComment
+  /MetadocumentCommandResults:
+    get:
+      operationId: getMetadocumentCommandResultByCustomId
       tags: [Metadocuments]
-      summary: Add Metadocument Comment
-      description: Adds comment to the specific metadocument.
-      requestBody:
-        required: true
-        content:
-          application/hal+json:
-            schema:
-              type: object
-              properties:
-                Text:
-                  type: string
-            example:
-              Text: Comment text.
-      responses:
-        "200":
-          $ref: "#/components/responses/MetadocumentCommandAccepted"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-    patch:
-      operationId: patchMetadocumentComment
-      tags: [Metadocuments]
-      summary: Patch Metadocument Comment
-      description: Updates comment for the specific metadocument.
-      requestBody:
-        required: true
-        content:
-          application/hal+json:
-            schema:
-              type: object
-              required: [Id]
-              properties:
-                Id:
-                  type: integer
-                Text:
-                  type: string
-            example:
-              Id: 12
-              Text: Comment text.
-      responses:
-        "200":
-          $ref: "#/components/responses/MetadocumentCommandAccepted"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /Metadocuments/{guid}/Comments/{id}:
-    delete:
-      operationId: deleteMetadocumentComment
-      tags: [Metadocuments]
-      summary: Delete Metadocument Comment
-      description: Deletes comment for the specific metadocument.
+      summary: Get Metadocument Command Result by custom identifier
+      description: |
+        Gets the result of a metadocument command by the client-supplied `commandCustomId` that was passed with the command request.
       parameters:
-        - name: guid
-          in: path
+        - name: commandCustomId
+          in: query
           required: true
           schema:
             type: string
-          description: The unique identifier of the metadocument.
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-          description: The unique identifier of the comment and its version within the metadocument.
+          description: The client-supplied command identifier.
       responses:
         "200":
-          $ref: "#/components/responses/MetadocumentCommandAccepted"
+          description: The metadocument command result.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/MetadocumentCommandResult"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1308,6 +1387,15 @@ components:
       in: query
       name: api_key
       description: The API key passed in the query string. Useful for quick tests, but avoid it in production integrations because URLs tend to end up in logs.
+
+  parameters:
+    CommandCustomId:
+      name: commandCustomId
+      in: query
+      required: false
+      schema:
+        type: string
+      description: Optional client-supplied identifier of the command. The command result can later be looked up with `GET /MetadocumentCommandResults?commandCustomId={id}`.
 
   schemas:
     AuthorizationCodeTokenRequest:
@@ -1532,6 +1620,406 @@ components:
           items:
             type: string
             enum: [View, Contributor, DataAdmin, Admin, Owner]
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+
+    UserSummary:
+      type: object
+      description: A user referenced from other resources (comment or production entry author, metadocument creator).
+      properties:
+        userId:
+          type: integer
+        name:
+          type: string
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+
+    MetadocumentComment:
+      type: object
+      description: A comment of a metadocument.
+      properties:
+        id:
+          type: integer
+          description: The identifier of the comment and its version, unique within the metadocument. Updating a comment assigns it a new `id` - always re-read the metadocument to get the current `id` before a subsequent update or delete.
+        text:
+          type: string
+          maxLength: 500
+        modificationTime:
+          type: string
+          format: date-time
+          description: UTC date and time of the last modification.
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+
+    ProductionEntry:
+      type: object
+      description: A record of a produced amount within a metadocument (typically a job).
+      properties:
+        id:
+          type: integer
+          description: The identifier of the production entry and its version, unique within the metadocument. Updating a production entry assigns it a new `id` - always re-read the metadocument to get the current `id` before a subsequent update or delete.
+        time:
+          type: string
+          format: date-time
+        value:
+          type: number
+          description: The produced amount.
+        type:
+          type: string
+          maxLength: 100
+          description: User-defined type of the entry (e.g. `OK`, `NOK`).
+        note:
+          type: string
+          maxLength: 500
+        reason:
+          type: string
+          description: The reason of the entry (e.g. why the amount was corrected).
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+
+    ProductionEntryCreate:
+      type: object
+      required: [Value]
+      properties:
+        Value:
+          type: number
+          description: The produced amount.
+        Type:
+          type: string
+          maxLength: 100
+          description: User-defined type of the entry (e.g. `OK`, `NOK`).
+        Note:
+          type: string
+          maxLength: 500
+        Time:
+          type: string
+          format: date-time
+          description: The time of the entry. It must lie within the time range of the metadocument, otherwise the command finishes with the `DataError` result. When omitted, the current UTC time is used - for metadocuments in the past, always provide `Time` explicitly.
+        Reason:
+          type: string
+          description: The reason of the entry (e.g. why the amount was corrected).
+
+    Tool:
+      type: object
+      description: A tool used by the job.
+      properties:
+        customId:
+          type: string
+          description: User-defined identifier of the tool.
+
+    PropertyLock:
+      type: object
+      description: A lock of a metadocument property. Locked properties can be modified only by the user who locked them or by a user with the Admin right.
+      properties:
+        propertyName:
+          type: string
+        userId:
+          type: [integer, "null"]
+          description: The user who locked the property.
+
+    # Internal-only metadocument response properties, intentionally not documented
+    # (returned by the API, but intended for the Portal frontend and internal
+    # integrations; third parties should ignore them):
+    # * eventSource, eventSourceId - identification of the external event that created the metadocument
+    # * fromTimeAdjustment, toTimeAdjustment - automatic time adjustment rules ({rule, maximalShift, ruleTimeThreshold, isResolved})
+    # * task - link to the related task entry ({id, initialTitle})
+    # * links - internal links to external data sources ({id, linkType, prefetchJson}); when a
+    #   ProductionEntries link exists, direct production entry modifications return 405
+    Metadocument:
+      type: object
+      description: A metadocument returned by the API. Properties with `null` values are omitted in HAL responses.
+      properties:
+        guid:
+          type: string
+          format: uuid
+        type:
+          type: integer
+          enum: [0, 1, 2, 3]
+          description: "The metadocument type: 0 = general, 1 = annotation, 2 = job, 3 = downtime."
+        title:
+          type: string
+        description:
+          type: string
+          description: Extended description; supports the Markdown markup language.
+        customId:
+          type: string
+          description: User-defined identifier.
+        creatorId:
+          type: integer
+          description: The identifier of the user who created the metadocument.
+        measurementId:
+          type: integer
+        from:
+          type: string
+          format: date-time
+        to:
+          type: [string, "null"]
+          format: date-time
+          description: "`null` denotes an unlimited (still running) metadocument."
+        lastModified:
+          type: string
+          format: date-time
+        eTag:
+          type: string
+          description: The concurrency stamp of the metadocument; pass it to update/delete operations for the optimistic concurrency check.
+        color:
+          type: string
+          description: Color in the hex color code.
+        setpoint:
+          type: number
+          description: The desired value of the measured quantity during the metadocument.
+        setpointQuantityType:
+          type: string
+          description: The quantity type of the setpoint.
+        operations:
+          type: array
+          items:
+            type: string
+          description: Operations of the job, as an array of string values.
+        downtimeCode:
+          type: string
+          description: Currently returns the same value as `downtimeCodeKey`. Use `downtimeCodeKey` instead; to obtain the human-readable code and its description, look the key up in the downtime code dictionary.
+        downtimeCodeKey:
+          type: string
+          description: The key of the assigned downtime code (see the downtime code dictionary).
+        workOrderNumber:
+          type: string
+        plannedFrom:
+          type: string
+          format: date-time
+        plannedTo:
+          type: string
+          format: date-time
+        plannedDuration:
+          type: number
+          description: The planned duration, in seconds.
+        targetAmount:
+          type: number
+          description: The target production amount of the job.
+        maximumProductionCoefficient:
+          type: number
+        currentProductionCoefficient:
+          type: number
+        maximumProductionCoefficientDenominator:
+          type: number
+        currentProductionCoefficientDenominator:
+          type: number
+        customFields:
+          type: object
+          additionalProperties: true
+          description: User-defined key/value fields.
+        readOnly:
+          type: boolean
+          description: When `true`, the metadocument cannot be modified.
+        locks:
+          type: array
+          items:
+            $ref: "#/components/schemas/PropertyLock"
+        automaticTermination:
+          type: boolean
+          description: Determines whether the metadocument will be terminated automatically.
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tool"
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+        _embedded:
+          type: object
+          properties:
+            comment:
+              type: array
+              items:
+                $ref: "#/components/schemas/MetadocumentComment"
+            productionEntry:
+              type: array
+              items:
+                $ref: "#/components/schemas/ProductionEntry"
+            user:
+              type: array
+              items:
+                $ref: "#/components/schemas/UserSummary"
+
+    # Internal-only create/update properties, intentionally not documented:
+    # * EventSource, EventSourceId - identification of the source event (used by internal integrations)
+    # * ReadOnly, Locks - read-only flag and property locks (managed by the Portal frontend)
+    # * FromTimeAdjustment, ToTimeAdjustment - automatic time adjustment rules
+    # * MetadocumentType - obsolete alias of Type
+    # * DowntimeCode - writable alias of DowntimeCodeKey (both map to the same entity field);
+    #   only DowntimeCodeKey is documented, DowntimeCode should eventually become a read-only
+    #   property resolved from the downtime code dictionary (see DOPORUCENI-API.md A12)
+    MetadocumentCreate:
+      type: object
+      required: [MeasurementId, Type, From]
+      properties:
+        MeasurementId:
+          type: integer
+        Type:
+          type: integer
+          enum: [0, 1, 2, 3]
+          description: "The metadocument type: 0 = general, 1 = annotation, 2 = job, 3 = downtime."
+        From:
+          type: string
+          format: date-time
+        To:
+          type: [string, "null"]
+          format: date-time
+          description: Omit or set to `null` for an unlimited (still running) metadocument.
+        Title:
+          type: string
+          description: The title of the metadocument (typically for jobs). For downtimes classified by a downtime code, leave the title empty and set only `DowntimeCodeKey` - the UI then displays the dictionary description of the code, and a later change of the description in the dictionary propagates to all downtimes.
+        Description:
+          type: string
+          description: Extended description; supports the Markdown markup language.
+        CustomId:
+          type: string
+          description: User-defined identifier. By default, at most one metadocument with the given `CustomId` per measurement is allowed (see the `allowMultiple` parameter).
+        Text:
+          type: string
+          maxLength: 500
+          description: When provided, the first comment of the metadocument is created with this text.
+        CommentTime:
+          type: string
+          format: date-time
+          description: The time of the first comment (used together with `Text`); when omitted, the current UTC time is used.
+        Setpoint:
+          type: number
+          description: The desired value of the measured quantity during the metadocument.
+        SetpointQuantityType:
+          type: string
+          description: The quantity type of the setpoint.
+        Color:
+          type: string
+          description: Color in the hex color code.
+        Operations:
+          type: array
+          items:
+            type: string
+          description: Operations of the job, as an array of string values.
+        DowntimeCodeKey:
+          type: string
+          description: The key of the downtime code to assign (see the downtime code dictionary). For downtimes, set only this property and leave `Title` empty.
+        WorkOrderNumber:
+          type: string
+        PlannedFrom:
+          type: string
+          format: date-time
+        PlannedTo:
+          type: string
+          format: date-time
+        PlannedDuration:
+          type: number
+          description: The planned duration, in seconds.
+        TargetAmount:
+          type: number
+          description: The target production amount of the job.
+        MaximumProductionCoefficient:
+          type: number
+        CurrentProductionCoefficient:
+          type: number
+        MaximumProductionCoefficientDenominator:
+          type: number
+        CurrentProductionCoefficientDenominator:
+          type: number
+        CustomFields:
+          type: object
+          additionalProperties: true
+          description: User-defined key/value fields.
+        AutomaticTermination:
+          type: boolean
+          description: Determines whether the metadocument will be terminated automatically.
+        Tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tool"
+
+    # Internal-only create/update properties: see the comment above MetadocumentCreate.
+    MetadocumentUpdate:
+      type: object
+      description: Only the properties present in the payload are changed.
+      properties:
+        ETag:
+          type: string
+          description: The concurrency stamp for the optimistic concurrency check; when the metadocument has been modified in the meantime, the command finishes with the `Conflict` result.
+        Title:
+          type: string
+        From:
+          type: string
+          format: date-time
+        To:
+          type: [string, "null"]
+          format: date-time
+          description: Set to `null` for an unlimited (still running) metadocument.
+        Description:
+          type: string
+          description: Extended description; supports the Markdown markup language.
+        CustomId:
+          type: string
+        Color:
+          type: string
+          description: Color in the hex color code.
+        Setpoint:
+          type: number
+        Operations:
+          type: array
+          items:
+            type: string
+        DowntimeCodeKey:
+          type: string
+          description: The key of the downtime code to assign (see the downtime code dictionary). For downtimes, set only this property and leave `Title` empty.
+        WorkOrderNumber:
+          type: string
+        PlannedFrom:
+          type: string
+          format: date-time
+        PlannedTo:
+          type: string
+          format: date-time
+        PlannedDuration:
+          type: number
+          description: The planned duration, in seconds.
+        TargetAmount:
+          type: number
+        MaximumProductionCoefficient:
+          type: number
+        CurrentProductionCoefficient:
+          type: number
+        MaximumProductionCoefficientDenominator:
+          type: number
+        CurrentProductionCoefficientDenominator:
+          type: number
+        CustomFields:
+          type: object
+          additionalProperties: true
+        AutomaticTermination:
+          type: boolean
+        Tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tool"
+
+    MetadocumentCommandResult:
+      type: object
+      properties:
+        guid:
+          type: string
+          format: uuid
+          description: Unique identifier of the metadocument command.
+        result:
+          type: string
+          enum: [Waiting, InProgress, Success, Conflict, DataError, Failed, AlreadyApplied]
+          description: The state of the command (see the Metadocuments group description).
+        createdDate:
+          type: [string, "null"]
+          format: date-time
+          description: UTC date and time when the command was created.
+        processedDate:
+          type: string
+          format: date-time
+          description: UTC date and time when the command was processed.
+        metadocumentGuid:
+          type: string
+          description: The identifier of the related metadocument.
         _links:
           $ref: "#/components/schemas/HalLinks"
 
