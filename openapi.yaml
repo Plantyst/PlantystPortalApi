@@ -115,11 +115,42 @@ tags:
       __Access rights__
 
       Reading metadocuments requires the _View_ right; creating, updating and deleting requires the _Contributor_ right. Metadocuments marked `readOnly` and properties locked by another user (`locks`) cannot be modified; users with the _Admin_ right bypass the locks. Comments can be updated only by their author; deleting another user's comment requires the _Admin_ right.
-  - name: CSV file with JOBs
+  - name: Job Types
     description: |
-      To upload a CSV with JOBs you need an access token and CSV file according to the following specification: coding UTF-8, separated by commas and containing header. We will prepare this access token for you (please contact us at support@plantyst.com).
+      Job types represent the plan of production jobs (work orders) prepared for the measurements - the list of jobs ready to run. Operators pick jobs from this list on the shop floor; a started job is then represented as a job metadocument (see Metadocuments).
 
-      Response for such actions is formed as the relative link to the location, where the result of the request should be checked. States Waiting and InProgress relates to waiting in queue of requests and processing progress. State Success indicates successful completion, state DataError occurs when CSV file contains invalid data and/or request for adjustment JOBs for measurements in which user have not sufficient rights.
+      The job type list is maintained by importing a CSV file. The import is an asynchronous command: the server responds with `202 Accepted` and the relative URL (`location`) of the command result (see Command Results). __The import replaces the whole job type list__ of every measurement affected by the file.
+
+      Required access rights: reading requires _View_ (the list is scoped to the user's current subscription); the CSV import requires the _DataAdmin_ right for the affected measurements.
+
+      __CSV file format__
+
+      * encoding UTF-8, values separated by a comma (`,`) or a semicolon (`;`) - the delimiter is detected automatically
+      * the first row is a header with column names; the names are matched case-insensitively, unknown columns are ignored
+      * supported columns: `Title` (required), `Setpoint`, `MeasurementId`, `PlannedFrom`, `PlannedTo`, `MaximumProductionCoefficient`, `MaximumProductionCoefficientDenominator`, `Description`, `AvailableTools`, `Operations`, `TargetAmount`, `MultipleInstanceId`, `IsMultipleInstanceOverlapDisabled`, `WorkOrderNumber`
+      * `AvailableTools` and `Operations` may contain multiple values separated by a pipe (`|`)
+      * `PlannedFrom`/`PlannedTo` are dates; the recommended format is UTC ISO 8601, e.g. `2026-07-02T06:50:00Z`
+      * custom fields: any column prefixed `Custom.` (e.g. `Custom.PartNumber`) is imported into the `customFields` of the job type
+      * numeric validations: `Setpoint`, `TargetAmount`, `MaximumProductionCoefficient` and its denominator must be greater than zero when provided
+      * limits: at most 10 000 rows per measurement and 500 000 rows per file
+      * `MeasurementId` determines the measurement of each row. __When the column is missing or empty in all rows, the same imported list is applied to every measurement where the user has the DataAdmin right__ - always provide the column unless this is really intended.
+
+      Example:
+
+      ```
+      Title,Setpoint,MeasurementId,PlannedFrom,PlannedTo,TargetAmount,WorkOrderNumber,Custom.PartNumber
+      Order 2026-0042,50,1770,2026-07-02T06:50:00Z,2026-07-02T07:20:00Z,100,WO-2026-0042,PN-123
+      ```
+  - name: Command Results
+    description: |
+      The results of asynchronous commands (e.g. the job types CSV import). A command request responds with `202 Accepted` and a body with the relative URL (`location`) of the command result. Poll the result URL until the `result` reaches one of the final states:
+
+      * `Waiting` / `InProgress` - the command is queued or being processed
+      * `Success` - the command completed successfully
+      * `DataError` - the input data are invalid; the `reason` property describes the problem
+      * `Conflict` / `Failed` / `AlreadyApplied` - other final states (see the Metadocuments group description)
+
+      Note: metadocument commands use their own result resource, `/MetadocumentCommandResults`.
 
 paths:
   /OAuth/Authorize:
@@ -1206,22 +1237,137 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   # ---------------------------------------------------------------------------
-  # CSV file with JOBs — content converted 1:1 from apiary.apib; will be updated
-  # against the current code state in a follow-up documentation group.
+  # Job Types
   # ---------------------------------------------------------------------------
+  /JobTypes:
+    get:
+      operationId: getJobTypes
+      tags: [Job Types]
+      summary: Get job types
+      description: |
+        Gets the list of job types (the job plan) of the user's current subscription.
+
+        Required access right: _View_.
+      parameters:
+        - name: measurementId
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: When specified, only job types of the given measurement are returned.
+      responses:
+        "200":
+          description: The list of job types.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+                  _embedded:
+                    type: object
+                    properties:
+                      jobType:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/JobType"
+              example:
+                _links:
+                  self:
+                    href: /Api/JobTypes
+                _embedded:
+                  jobType:
+                    - jobTypeId: 730039621
+                      title: Order 2026-0042
+                      setpoint: 50
+                      measurementId: 1770
+                      plannedFrom: "2026-07-02T06:50:00Z"
+                      plannedTo: "2026-07-02T07:20:00Z"
+                      isPermanent: false
+                      currentState: Available
+                      order: 1
+                      commandGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
+                      targetAmount: 100
+                      workOrderNumber: WO-2026-0042
+                      customFields:
+                        PartNumber: PN-123
+                      _links:
+                        self:
+                          href: /Api/JobTypes/730039621
+                    - jobTypeId: 730039622
+                      title: 01.SP
+                      setpoint: 36.67
+                      measurementId: 1771
+                      isPermanent: false
+                      currentState: Available
+                      order: 1
+                      commandGuid: 1d8a6a09-d957-4969-9c69-2a061d6c92f4
+                      _links:
+                        self:
+                          href: /Api/JobTypes/730039622
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /JobTypes/{id}:
+    get:
+      operationId: getJobType
+      tags: [Job Types]
+      summary: Get job type
+      description: |
+        Gets the job type with the specific identifier.
+
+        Required access right: _View_.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: The job type identifier.
+      responses:
+        "200":
+          description: The job type.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/JobType"
+              example:
+                jobTypeId: 730039621
+                title: Order 2026-0042
+                setpoint: 50
+                measurementId: 1770
+                plannedFrom: "2026-07-02T06:50:00Z"
+                plannedTo: "2026-07-02T07:20:00Z"
+                isPermanent: false
+                currentState: Available
+                order: 1
+                commandGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
+                targetAmount: 100
+                workOrderNumber: WO-2026-0042
+                _links:
+                  self:
+                    href: /Api/JobTypes/730039621
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /JobTypesImportCommands:
     post:
-      operationId: uploadJobTypesCsv
-      tags: [CSV file with JOBs]
-      summary: Upload CSV file
+      operationId: importJobTypes
+      tags: [Job Types]
+      summary: Upload CSV file with JOBs
       description: |
-        Uploads the CSV file with JOBs.
+        Uploads the CSV file with the job plan (see the group description for the file format). Exactly one file is expected as a multipart content.
 
-        The content of these CSV file must be MIME multipart content and only single file upload is supported.
+        __The import replaces the whole job type list__ of every measurement affected by the file.
 
-        A response object has the following properties:
+        Required access right: _DataAdmin_ (for all affected measurements; insufficient rights on any of them cause the `DataError` command result).
 
-        * `location` (string) - specifies the relative URL with the result of the requested operation
+        The import is asynchronous: the response contains the relative URL (`location`) of the command result. Poll the URL until the `result` reaches `Success` or `DataError` (the `reason` property then describes the problem, e.g. `Header does not contain any valid field.` or `Title must be defined.`).
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
         required: true
         content:
@@ -1232,136 +1378,87 @@ paths:
                 jobTypesFile:
                   type: string
                   contentMediaType: text/csv
-                  description: The CSV file with JOBs (UTF-8, comma separated, with header).
+                  description: The CSV file with JOBs (UTF-8, comma or semicolon separated, with a header row).
       responses:
-        "200":
-          description: The relative URL with the result of the requested operation.
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The multipart data are invalid or more than one file was uploaded.
           content:
-            application/hal+json:
+            application/json:
               schema:
-                $ref: "#/components/schemas/CommandLocation"
+                $ref: "#/components/schemas/ApiMessage"
               example:
-                location: api/commandResults/5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
+                Message: Only single file upload is supported.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user does not have the DataAdmin right for any measurement.
+        "415":
+          description: The request content is not a MIME multipart content.
 
-  /JobTypes:
+  # ---------------------------------------------------------------------------
+  # Command Results
+  # ---------------------------------------------------------------------------
+  /commandResults/{id}:
     get:
-      operationId: getJobTypes
-      tags: [CSV file with JOBs]
-      summary: Get job types
-      description: |
-        Gets the list of uploaded JOBs.
-
-        A response object has the following properties:
-
-        * `jobTypeId` - unique JOB identifier
-        * `title` - title of the JOB
-        * `setpoint` - speed prescription
-        * `measurementId` - unique measurement identifier
-        * `plannedFrom` - planned from date
-        * `plannedTo` - planned to date
-        * `isPermanent` - is the JOB permanent
-        * `currentState` - current state
-        * `maximumProductionCoefficient` - maximum production coefficient
-        * `order` - order
-        * `commandGuid` - unique command identifier
-        * `description` - description
-        * `operations` - operations
-        * `targetAmount` - target amount
-        * `customFields` - custom fields
+      operationId: getCommandResult
+      tags: [Command Results]
+      summary: Get command result
+      description: Gets the result of an asynchronous command. Poll this endpoint until the `result` reaches one of the final states (see the group description).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Unique identifier of the command.
       responses:
         "200":
-          description: The list of uploaded JOBs.
+          description: The command result.
           content:
             application/hal+json:
               schema:
-                type: object
-                properties:
-                  resourceList:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        jobTypeId:
-                          type: integer
-                        title:
-                          type: string
-                        setpoint:
-                          type: [number, "null"]
-                        measurementId:
-                          type: integer
-                        plannedFrom:
-                          type: [string, "null"]
-                          format: date-time
-                        plannedTo:
-                          type: [string, "null"]
-                          format: date-time
-                        isPermanent:
-                          type: boolean
-                        currentState:
-                          type: string
-                        maximumProductionCoefficient:
-                          type: [number, "null"]
-                        order:
-                          type: integer
-                        commandGuid:
-                          type: string
-                        description:
-                          type: [string, "null"]
-                        operations:
-                          type: [array, "null"]
-                          items:
-                            type: string
-                        targetAmount:
-                          type: [number, "null"]
-                        customFields:
-                          type: [object, "null"]
-                        _links: {}
-                        _embedded: {}
+                $ref: "#/components/schemas/CommandResult"
               example:
-                resourceList:
-                  - jobTypeId: 42457026
-                    title: Zakázka 1
-                    setpoint: 50
-                    measurementId: 1770
-                    plannedFrom: "2019-07-02T06:50:00Z"
-                    plannedTo: "2019-07-02T07:20:00Z"
-                    isPermanent: false
-                    currentState: Available
-                    maximumProductionCoefficient: null
-                    order: 1
-                    commandGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
-                    description: null
-                    operations: null
-                    targetAmount: null
-                    customFields: null
-                    _links:
-                      - rel: self
-                        href: ~/Api/JobTypes/42457026
-                        title: null
-                        isTemplated: false
-                    _embedded: null
-                  - jobTypeId: 41205284
-                    title: 01.SP
-                    setpoint: 36.67
-                    measurementId: 1771
-                    plannedFrom: null
-                    plannedTo: null
-                    isPermanent: false
-                    currentState: Available
-                    maximumProductionCoefficient: null
-                    order: 1
-                    commandGuid: 1d8a6a09-d957-4969-9c69-2a061d6c92f4
-                    description: null
-                    operations: null
-                    targetAmount: null
-                    customFields: null
-                    _links:
-                      - rel: self
-                        href: ~/Api/JobTypes/41205284
-                        title: null
-                        isTemplated: false
-                    _embedded: null
+                guid: acace64f-35d1-4892-8daa-a63062092c8f
+                result: DataError
+                reason: Header does not contain any valid field.
+                createdDate: "2026-07-11T15:03:57.4452994Z"
+                processedDate: "2026-07-11T15:03:57.6753207Z"
+                _links:
+                  self:
+                    href: /api/commandResults/acace64f-35d1-4892-8daa-a63062092c8f
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
+  /commandResults:
+    get:
+      operationId: getCommandResultByCustomId
+      tags: [Command Results]
+      summary: Get command result by custom identifier
+      description: Gets the result of an asynchronous command by the client-supplied `commandCustomId` that was passed with the command request.
+      parameters:
+        - name: commandCustomId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The client-supplied command identifier.
+      responses:
+        "200":
+          description: The command result.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/CommandResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
 components:
   securitySchemes:
     oauth2:
@@ -1395,7 +1492,7 @@ components:
       required: false
       schema:
         type: string
-      description: Optional client-supplied identifier of the command. The command result can later be looked up with `GET /MetadocumentCommandResults?commandCustomId={id}`.
+      description: Optional client-supplied identifier of the command. The command result can later be looked up by this identifier - metadocument commands with `GET /MetadocumentCommandResults?commandCustomId={id}`, other commands with `GET /commandResults?commandCustomId={id}`.
 
   schemas:
     AuthorizationCodeTokenRequest:
@@ -2023,6 +2120,100 @@ components:
         _links:
           $ref: "#/components/schemas/HalLinks"
 
+    JobType:
+      type: object
+      description: A job type - one job of the job plan imported through the CSV import. Properties with `null` values are omitted in HAL responses.
+      properties:
+        jobTypeId:
+          type: integer
+          description: The identifier of the job type. It is NOT stable across imports - every CSV import replaces the job list and assigns new identifiers. To correlate job types with an external system, use `WorkOrderNumber` or a `Custom.`-prefixed field instead.
+        title:
+          type: string
+        setpoint:
+          type: [number, "null"]
+          description: The desired production speed during the job.
+        measurementId:
+          type: integer
+        plannedFrom:
+          type: [string, "null"]
+          format: date-time
+        plannedTo:
+          type: [string, "null"]
+          format: date-time
+        isPermanent:
+          type: boolean
+          description: Permanent job types stay available in the job list.
+        currentState:
+          type: string
+          enum: [Available, Running, Paused, Finished]
+        maximumProductionCoefficient:
+          type: [number, "null"]
+        maximumProductionCoefficientDenominator:
+          type: [number, "null"]
+        order:
+          type: [integer, "null"]
+          description: The position of the job type in the job list (the order of rows in the imported file).
+        commandGuid:
+          type: string
+          format: uuid
+          description: The identifier of the import command that created the job type.
+        description:
+          type: [string, "null"]
+        operations:
+          type: [array, "null"]
+          items:
+            type: string
+        availableTools:
+          type: [array, "null"]
+          items:
+            type: string
+        targetAmount:
+          type: [number, "null"]
+          description: The target production amount of the job.
+        customFields:
+          type: [object, "null"]
+          additionalProperties: true
+          description: User-defined key/value fields imported from the `Custom.`-prefixed CSV columns.
+        workOrderNumber:
+          type: [string, "null"]
+        completedDate:
+          type: [string, "null"]
+          format: date-time
+          description: The date when the job has been completed.
+        multipleInstanceId:
+          type: [string, "null"]
+          description: The identifier grouping multiple instances of the same job.
+        isMultipleInstanceOverlapDisabled:
+          type: [boolean, "null"]
+          description: Determines whether the instances of the job cannot run concurrently.
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+
+    CommandResult:
+      type: object
+      properties:
+        guid:
+          type: string
+          format: uuid
+          description: Unique identifier of the command.
+        result:
+          type: string
+          enum: [Waiting, InProgress, Success, Conflict, DataError, Failed, AlreadyApplied]
+          description: The state of the command (see the Command Results group description).
+        reason:
+          type: [string, "null"]
+          description: The description of the problem when the command failed (e.g. with the `DataError` result).
+        createdDate:
+          type: [string, "null"]
+          format: date-time
+          description: UTC date and time when the command was created.
+        processedDate:
+          type: string
+          format: date-time
+          description: UTC date and time when the command was processed.
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+
   responses:
     Unauthorized:
       description: Authorization has been denied for this request.
@@ -2048,6 +2239,14 @@ components:
             $ref: "#/components/schemas/ApiMessage"
           example:
             Message: Not Found.
+    CommandAccepted:
+      description: The command was accepted. The body contains the relative URL of the command result.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CommandLocation"
+          example:
+            location: api/commandResults/5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
     MetadocumentCommandAccepted:
       description: The relative URL with the result of the requested operation.
       content:
