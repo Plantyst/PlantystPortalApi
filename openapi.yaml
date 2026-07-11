@@ -160,6 +160,20 @@ tags:
       Title,Setpoint,MeasurementId,PlannedFrom,PlannedTo,TargetAmount,WorkOrderNumber,Custom.PartNumber
       Order 2026-0042,50,1770,2026-07-02T06:50:00Z,2026-07-02T07:20:00Z,100,WO-2026-0042,PN-123
       ```
+  - name: Calendar
+    description: |
+      The measurement calendar defines the planned production time: __shifts__ (`plannedProduction` events) and __planned shutdowns__ (`plannedShutdown` events). The calendar drives the OEE computation (planned time) and shift-related behavior like downtime transfers.
+
+      __Event identity__
+
+      * The event identifier (`id` in the URL) is the __Unix timestamp (in seconds) of the event start__. Changing the start of an event also changes its identifier.
+      * Every event carries a `guid` - the identifier of the command that created or last changed it. It is passed as `OriginGuid` to the update, delete and operator commands, and a new value is assigned by every change (re-read the events before a subsequent change). A stale `OriginGuid` responds with `409 Conflict` (synchronously for the update).
+
+      __Pauses__
+
+      The shift pauses are expressed as __offsets from the shift start__ in the .NET TimeSpan format `[dd.]hh:mm:ss` - e.g. a pause `{ "from": "04:00:00", "to": "04:15:00" }` of a shift starting at 06:00 UTC runs from 10:00 to 10:15 UTC.
+
+      Reading the calendar requires the _View_ right; the management operations require the _DataAdmin_ right and follow the asynchronous command pattern (`202 Accepted` + `location`, see Command Results).
   - name: Command Results
     description: |
       The results of asynchronous commands (e.g. the job types CSV import). A command request responds with `202 Accepted` and a body with the relative URL (`location`) of the command result. Poll the result URL until the `result` reaches one of the final states:
@@ -770,7 +784,7 @@ paths:
                           href: /Api/Users/497
                   user:
                     - userId: 497
-                      name: Martin Kouďa
+                      name: Jan Novák
                       _links:
                         self:
                           href: /Api/Users/497
@@ -1163,7 +1177,7 @@ paths:
                 _embedded:
                   user:
                     - userId: 497
-                      name: Martin Kouďa
+                      name: Jan Novák
                       _links:
                         self:
                           href: /Api/Users/497
@@ -1897,6 +1911,371 @@ paths:
         "415":
           description: The request content is not a MIME multipart content.
 
+  # ---------------------------------------------------------------------------
+  # Calendar
+  # ---------------------------------------------------------------------------
+  /Calendars/{measurementId}/Events:
+    parameters:
+      - name: measurementId
+        in: path
+        required: true
+        schema:
+          type: integer
+    get:
+      operationId: getCalendarEvents
+      tags: [Calendar]
+      summary: Get calendar events
+      description: |
+        Gets the calendar events (shifts and planned shutdowns) of the measurement in the given time range.
+
+        Required access right: _View_.
+      parameters:
+        - name: fromDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: toDate
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: The calendar events with the related operators.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/CalendarEventList"
+              example:
+                hasDataAdminAccessRightDictionary:
+                  "3": true
+                _links:
+                  self:
+                    href: /Api/Calendars/3/Events/
+                _embedded:
+                  event:
+                    - shiftName: Morning shift
+                      shiftType: Morning
+                      eventType: PlannedProduction
+                      measurementId: 3
+                      start: "2026-07-12T06:00:00Z"
+                      end: "2026-07-12T14:00:00Z"
+                      pauses:
+                        - from: "04:00:00"
+                          to: "04:15:00"
+                      plannedOperatorAssignment: 1
+                      overtime: false
+                      guid: 29488260-a3c8-4ed4-be08-2fd84fbfd66c
+                      _links:
+                        self:
+                          href: /Api/Calendars/3/Events/PlannedProduction/1783836000
+                        operators:
+                          href: /Api/Users/101
+                  user:
+                    - userId: 101
+                      name: Jan Novák
+                      _links:
+                        self:
+                          href: /Api/Users/101
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createCalendarEvent
+      tags: [Calendar]
+      summary: Create calendar event
+      description: |
+        Creates a calendar event (a shift or a planned shutdown) on the measurement.
+
+        Required access right: _DataAdmin_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [FromDate, ToDate]
+              properties:
+                FromDate:
+                  type: string
+                  format: date-time
+                  description: The start of the event; it also becomes the event identifier (its Unix timestamp).
+                ToDate:
+                  type: string
+                  format: date-time
+                EventType:
+                  type: string
+                  enum: [plannedProduction, plannedShutdown]
+                  description: The type of the event; `plannedProduction` (a shift) when omitted.
+                ShiftName:
+                  type: string
+                ShiftType:
+                  type: string
+                  description: User-defined shift type label (e.g. `Morning`).
+                Pauses:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/PauseIntervalWrite"
+                PlannedOperatorAssignment:
+                  type: number
+                  minimum: 0
+                  description: The planned number of assigned operators.
+                EffectiveOperatorAssignment:
+                  type: number
+                  minimum: 0
+                  description: The effective number of assigned operators.
+                Overtime:
+                  type: boolean
+            example:
+              FromDate: "2026-07-12T06:00:00Z"
+              ToDate: "2026-07-12T14:00:00Z"
+              EventType: plannedProduction
+              ShiftName: Morning shift
+              ShiftType: Morning
+              Pauses:
+                - From: "04:00:00"
+                  To: "04:15:00"
+              PlannedOperatorAssignment: 1
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The payload is invalid (e.g. a negative operator assignment).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /Calendars/Events:
+    post:
+      operationId: getCalendarEventsBatch
+      tags: [Calendar]
+      summary: Get calendar events for multiple measurements
+      description: |
+        Gets the calendar events for the given measurements and time ranges in one request.
+
+        Required access right: _View_ for every queried measurement (otherwise `403 Forbidden`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Queries:
+                  type: array
+                  items:
+                    type: object
+                    required: [MeasurementId, From, To]
+                    properties:
+                      MeasurementId:
+                        type: integer
+                      From:
+                        type: string
+                        format: date-time
+                      To:
+                        type: string
+                        format: date-time
+            example:
+              Queries:
+                - MeasurementId: 3
+                  From: "2026-07-12T00:00:00Z"
+                  To: "2026-07-19T00:00:00Z"
+      responses:
+        "200":
+          description: The calendar events with the related operators.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/CalendarEventList"
+        "400":
+          description: The payload is missing or invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /Calendars/{measurementId}/Events/{eventType}/{id}:
+    parameters:
+      - name: measurementId
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: eventType
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [plannedProduction, plannedShutdown]
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The event identifier - the Unix timestamp (in seconds) of the event start. Note that changing the event start also changes its identifier.
+        example: "1783836000"
+    patch:
+      operationId: updateCalendarEvent
+      tags: [Calendar]
+      summary: Update calendar event
+      description: |
+        Updates the calendar event. Only events of the `plannedProduction` type can be updated (`400 Bad Request` otherwise); a planned shutdown has to be deleted and recreated instead. Only the properties present in the payload are changed (`FromDate`, `ToDate` and `OriginGuid` are always required).
+
+        Unlike other command endpoints, the concurrency check runs synchronously: a stale `OriginGuid` responds with `409 Conflict` immediately.
+
+        Required access right: _DataAdmin_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [OriginGuid, FromDate, ToDate]
+              properties:
+                OriginGuid:
+                  type: string
+                  format: uuid
+                  description: The current `guid` of the event (see the group description).
+                FromDate:
+                  type: string
+                  format: date-time
+                  description: The new start of the event. Changing it also changes the event identifier.
+                ToDate:
+                  type: string
+                  format: date-time
+                ShiftName:
+                  type: string
+                ShiftType:
+                  type: string
+                Pauses:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/PauseIntervalWrite"
+                PlannedOperatorAssignment:
+                  type: number
+                  minimum: 0
+                EffectiveOperatorAssignment:
+                  type: number
+                  minimum: 0
+                Overtime:
+                  type: boolean
+            example:
+              OriginGuid: 29488260-a3c8-4ed4-be08-2fd84fbfd66c
+              FromDate: "2026-07-12T06:00:00Z"
+              ToDate: "2026-07-12T15:00:00Z"
+              ShiftName: Morning shift (extended)
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The event type is not `plannedProduction`, the dates are invalid, or `FromDate` is not before `ToDate`.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No event of the given type starts at the time given by `id`.
+        "409":
+          description: The `OriginGuid` is stale - the event has been modified in the meantime. Re-read the events to get the current `guid`.
+    delete:
+      operationId: deleteCalendarEvent
+      tags: [Calendar]
+      summary: Delete calendar event
+      description: |
+        Deletes the calendar event.
+
+        Required access right: _DataAdmin_.
+      parameters:
+        - name: originGuid
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The current `guid` of the event.
+        - $ref: "#/components/parameters/CommandCustomId"
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The event type is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /CalendarOperatorAddCommands:
+    post:
+      operationId: addCalendarOperator
+      tags: [Calendar]
+      summary: Assign operator to shift
+      description: |
+        Assigns the user as an operator of the shift given by the event identifier.
+
+        Required access right: _DataAdmin_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CalendarOperatorCommand"
+            example:
+              MeasurementId: 3
+              Id: "1783836000"
+              OriginGuid: 29488260-a3c8-4ed4-be08-2fd84fbfd66c
+              UserId: 101
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /CalendarOperatorRemoveCommands:
+    post:
+      operationId: removeCalendarOperator
+      tags: [Calendar]
+      summary: Remove operator from shift
+      description: |
+        Removes the user from the operators of the shift given by the event identifier.
+
+        Required access right: _DataAdmin_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CalendarOperatorCommand"
+            example:
+              MeasurementId: 3
+              Id: "1783836000"
+              OriginGuid: 29488260-a3c8-4ed4-be08-2fd84fbfd66c
+              UserId: 101
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   # ---------------------------------------------------------------------------
   # Command Results
   # ---------------------------------------------------------------------------
@@ -2804,6 +3183,112 @@ components:
         MaxLength:
           type: integer
           description: The maximal length of the downtime in seconds; a longer downtime is automatically split.
+
+
+    PauseInterval:
+      type: object
+      description: A pause within a shift, expressed as offsets from the shift start in the `[dd.]hh:mm:ss` format.
+      properties:
+        from:
+          type: string
+          description: The offset of the pause start from the shift start.
+        to:
+          type: string
+          description: The offset of the pause end from the shift start.
+
+    PauseIntervalWrite:
+      type: object
+      description: A pause within a shift, expressed as offsets from the shift start in the `[dd.]hh:mm:ss` format.
+      properties:
+        From:
+          type: string
+          description: The offset of the pause start from the shift start.
+        To:
+          type: string
+          description: The offset of the pause end from the shift start.
+
+    CalendarEvent:
+      type: object
+      description: A calendar event - a shift (`PlannedProduction`) or a planned shutdown (`PlannedShutdown`). Properties with `null` values are omitted in HAL responses.
+      properties:
+        eventType:
+          type: string
+          enum: [PlannedProduction, PlannedShutdown]
+        measurementId:
+          type: integer
+        start:
+          type: string
+          format: date-time
+          description: The start of the event; its Unix timestamp is the event identifier.
+        end:
+          type: string
+          format: date-time
+        guid:
+          type: string
+          format: uuid
+          description: The identifier of the command that created or last changed the event; used as `OriginGuid` in the management operations.
+        title:
+          type: [string, "null"]
+        shiftName:
+          type: [string, "null"]
+        shiftType:
+          type: [string, "null"]
+          description: User-defined shift type label.
+        pauses:
+          type: array
+          items:
+            $ref: "#/components/schemas/PauseInterval"
+        plannedOperatorAssignment:
+          type: [number, "null"]
+          description: The planned number of assigned operators.
+        effectiveOperatorAssignment:
+          type: [number, "null"]
+          description: The effective number of assigned operators.
+        overtime:
+          type: boolean
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+          description: Besides `self`, the event carries an `operators` link relation pointing to the users assigned to the shift; their user objects are embedded at the list level (`_embedded.user`).
+
+    CalendarEventList:
+      type: object
+      properties:
+        hasDataAdminAccessRightDictionary:
+          type: object
+          additionalProperties:
+            type: boolean
+          description: For every queried measurement, whether the current user has the DataAdmin right (i.e. can manage its calendar).
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+        _embedded:
+          type: object
+          properties:
+            event:
+              type: array
+              items:
+                $ref: "#/components/schemas/CalendarEvent"
+            user:
+              type: array
+              description: The operators assigned to the returned shifts (referenced from the events through their `operators` link relation).
+              items:
+                $ref: "#/components/schemas/UserSummary"
+
+    CalendarOperatorCommand:
+      type: object
+      required: [MeasurementId, Id, OriginGuid, UserId]
+      properties:
+        MeasurementId:
+          type: integer
+        Id:
+          type: string
+          description: The event identifier (the Unix timestamp of the shift start).
+        OriginGuid:
+          type: string
+          format: uuid
+          description: The current `guid` of the event.
+        UserId:
+          type: integer
+          description: The identifier of the operator (user).
 
   responses:
     Unauthorized:
