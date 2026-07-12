@@ -15,6 +15,49 @@ info:
     In HAL responses, a relation with a single link is serialized as an object, while a relation with multiple links is serialized as an array of link objects.
 
     Property names in request payloads are matched case-insensitively (e.g. `text` and `Text` are equivalent); the documentation uses the PascalCase form for requests and the camelCase form for responses, matching the server's own serialization.
+
+    ## Synchronous and asynchronous operations
+
+    Most write operations of the API are __asynchronous commands__: the server validates the request, responds with `202 Accepted`, and the body carries the relative URL of the command result:
+
+    ```json
+    { "location": "api/commandResults/5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d" }
+    ```
+
+    Poll the result URL until the `result` property reaches one of the final states:
+
+    | `result` | Meaning |
+    |---|---|
+    | `Waiting` / `InProgress` | The command is queued or being processed. |
+    | `Success` | The command completed successfully. |
+    | `Conflict` | An optimistic concurrency check failed (a stale `ETag` or `OriginGuid` value) - re-read the resource and retry. |
+    | `DataError` | The command data are invalid; the `reason` property describes the problem. |
+    | `Failed` | The command processing failed. |
+    | `AlreadyApplied` | The same command was already applied. |
+
+    There are two families of command results, distinguished by the `location` URL:
+
+    * __generic commands__ - the result lives at `api/commandResults/{id}` (see Command Results)
+    * __metadocument commands__ - the commands changing metadocuments have their own result resource at `Api/MetadocumentCommandResults/{guid}` (see Metadocuments)
+
+    Every command endpoint accepts an optional `commandCustomId` query parameter - a client-supplied identifier of the command. When the response with the `location` is lost, the result can be looked up with `GET /commandResults?commandCustomId={id}` (or `GET /MetadocumentCommandResults?commandCustomId={id}` for the metadocument commands).
+
+    __Optimistic concurrency.__ Resources changed by commands carry the identifier of the last applied command - the `eTag` of a metadocument, the `commandGuid` of a measurement, downtime code or task, the `guid` of a calendar event. The update and delete commands take the current value (as `ETag`, `OriginGuid` or `OriginGuids`), and every applied command assigns a new one - so always re-read the resource before a subsequent change. A command with a stale value finishes with the `Conflict` result; some commands detect the conflict already synchronously and respond with `409 Conflict` (noted at the respective operations).
+
+    The following table summarizes how the write operations of each area behave:
+
+    | Area | Write operations | Command result |
+    |---|---|---|
+    | Metadocuments (incl. comments, production entries, split) | asynchronous | `Api/MetadocumentCommandResults/{guid}` |
+    | Production records import (NOK CSV) | asynchronous | `api/commandResults/{id}` |
+    | Tasks | asynchronous | `api/commandResults/{id}` |
+    | Downtime Codes | asynchronous | `api/commandResults/{id}` |
+    | Automatic Downtime Generation | asynchronous | `api/commandResults/{id}` |
+    | Job Types (CSV import) | asynchronous | `api/commandResults/{id}` |
+    | Calendar | asynchronous; concurrency conflicts reported synchronously with `409` | `api/commandResults/{id}` |
+    | Measurement lifecycle & data sources | asynchronous; some conflicts synchronous (`409`) | `api/commandResults/{id}` |
+    | Measurement tags | synchronous (the response directly carries the outcome) | - |
+    | SCIM Provisioning | synchronous (SCIM protocol semantics) | - |
   contact:
     name: Plantyst support
     email: support@plantyst.com
@@ -98,14 +141,7 @@ tags:
 
       __Command-based architecture__
 
-      All operations that change the state of metadocuments are asynchronous commands. The server responds with `202 Accepted` and a body with the relative URL (`location`) of the command result. Poll the command result URL until the `result` reaches one of the final states:
-
-      * `Waiting` / `InProgress` - the command is queued or being processed
-      * `Success` - the command completed successfully
-      * `Conflict` - the optimistic concurrency check failed (the metadocument was modified in the meantime, see the ETag note below)
-      * `DataError` - the command data are invalid
-      * `Failed` - the command processing failed
-      * `AlreadyApplied` - the same command was already applied
+      All operations that change the state of metadocuments are asynchronous commands - the general pattern (`202 Accepted` + polling the `location` URL) and the final states are described in _Synchronous and asynchronous operations_ in the introduction. The metadocument commands have their own result resource, `Api/MetadocumentCommandResults/{guid}`; the `Conflict` result signals a failed optimistic concurrency check (see the ETag note below).
 
       __Optimistic concurrency__
 
@@ -130,7 +166,7 @@ tags:
 
       __Beta:__ the Tasks API is a Beta version - improvements are under development and the contract may still change. Do not build critical flows on it yet.
 
-      The management operations follow the asynchronous command pattern (`202 Accepted` + `location`, generic command results). Every change assigns a new `commandGuid` to the task; the update and delete commands require the current value as `OriginGuid` - re-read the task before a change.
+      The management operations follow the asynchronous command pattern (`202 Accepted` + `location`, generic command results - see _Synchronous and asynchronous operations_ in the introduction). Every change assigns a new `commandGuid` to the task; the update and delete commands require the current value as `OriginGuid` - re-read the task before a change.
 
       Reading the tasks requires the _View_ right of the measurement of the linked metadocument; creating, updating and deleting requires the _Contributor_ right, and the measurement must belong to the current customer account of the user.
   - name: Downtime Codes
@@ -211,14 +247,9 @@ tags:
       Reading the metrics requires the _View_ right.
   - name: Command Results
     description: |
-      The results of asynchronous commands (e.g. the job types CSV import). A command request responds with `202 Accepted` and a body with the relative URL (`location`) of the command result. Poll the result URL until the `result` reaches one of the final states:
+      The results of the generic asynchronous commands. The pattern - `202 Accepted`, polling the `location` URL and the meaning of the final states - is described in _Synchronous and asynchronous operations_ in the introduction.
 
-      * `Waiting` / `InProgress` - the command is queued or being processed
-      * `Success` - the command completed successfully
-      * `DataError` - the input data are invalid; the `reason` property describes the problem
-      * `Conflict` / `Failed` / `AlreadyApplied` - other final states (see the Metadocuments group description)
-
-      Note: metadocument commands use their own result resource, `/MetadocumentCommandResults`.
+      The metadocument commands use their own result resource - see `/MetadocumentCommandResults` in the Metadocuments group.
 
   - name: Automatic Downtime Generation
     description: |
