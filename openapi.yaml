@@ -50,10 +50,10 @@ info:
     |---|---|---|
     | Metadocuments (incl. comments, production entries, split) | asynchronous | `Api/MetadocumentCommandResults/{guid}` |
     | Production records import (NOK CSV) | asynchronous | `api/commandResults/{id}` |
-    | Tasks | asynchronous | `api/commandResults/{id}` |
-    | Downtime Codes | asynchronous | `api/commandResults/{id}` |
+    | Tasks (Beta) | asynchronous | `api/commandResults/{id}` |
+    | Downtime Codes Dictionary | asynchronous | `api/commandResults/{id}` |
     | Automatic Downtime Generation | asynchronous | `api/commandResults/{id}` |
-    | Job Types (CSV import) | asynchronous | `api/commandResults/{id}` |
+    | Job Plan (CSV import) | asynchronous | `api/commandResults/{id}` |
     | Calendar | asynchronous; concurrency conflicts reported synchronously with `409` | `api/commandResults/{id}` |
     | Measurement lifecycle & data sources | asynchronous; some conflicts synchronous (`409`) | `api/commandResults/{id}` |
     | Measurement tags | synchronous (the response directly carries the outcome) | - |
@@ -120,8 +120,26 @@ tags:
       * _Owner_ - same as Admin, but the access rights can't be revoked
 
       The rights are hierarchical: each right includes all the lower ones (e.g. a user with the _DataAdmin_ right also has the _Contributor_ and _View_ rights). Endpoints in this documentation state the minimal required access right.
-  - name: Measurement Data
-    description: This section describes the API endpoints for accessing the basic measurement data.
+
+      __Administration__
+
+      Besides the measurement list, the group also contains the administration of the measurements:
+
+      * __Lifecycle commands__ - creating, updating and archiving a measurement, following the asynchronous command pattern. The update and archive commands take the current `commandGuid` of the measurement as `OriginGuid` - every applied command assigns a new value, so re-read the measurement before a change.
+      * __Shift systems__ - the shift schedules of a measurement (read-only in the API; managed in the Portal settings).
+      * __Tags__ - colored labels assigned to the measurements, used for filtering and grouping in the Portal. A tag is shared within the customer account. The tag operations are synchronous (no command result polling).
+      * __Data sources__ - the device inputs the measurements collect their data from: creating an input on a device and (un)assigning it to a measurement. The device and input identifiers are provided by Plantyst when the hardware is provisioned.
+
+      Managing the tags and updating or renaming a measurement requires the _Admin_ right; archiving a measurement and managing its data sources requires the _Owner_ right (plus administrator access to the device).
+  - name: Measurement Data & Metrics
+    description: |
+      Reading the collected measurement data and the production KPIs computed from them:
+
+      * __Time series__ (`/MeasurementTimeSeriesAggregationsQuery`) - the aggregated production data of a time range.
+      * __Basic metrics__ (`/MeasurementMetricsQuery`) - the produced amount and the uptime share of a time range.
+      * __OEE metric set__ (`/MeasurementMetricsQuery2`, __Beta__) - the full OEE decomposition (availability x performance x quality) plus the fulfillment metrics. The planned production time comes from the measurement calendar (see Calendar) - without a calendar, the planned-time-based metrics are `null`. The endpoint is a Beta version - the set of returned metrics and their names may still change. The KPI terminology is explained in the [support center guide](https://support.plantyst.com/hc/cs/articles/17673220154908) (currently in Czech only).
+
+      The metrics are returned as `{name, value}` pairs; a `value` is `null` when the metric cannot be computed from the available data. Reading requires the _View_ right.
   - name: Metadocuments
     description: |
       Resources related to metadocuments in the API. Metadocument is a general term for various types of measurement-related records. The `type` of the metadocument determines its meaning:
@@ -158,18 +176,7 @@ tags:
       __Access rights__
 
       Reading metadocuments requires the _View_ right; creating, updating and deleting requires the _Contributor_ right. Metadocuments marked `readOnly` and properties locked by another user (`locks`) cannot be modified; users with the _Admin_ right bypass the locks. Comments can be updated only by their author; deleting another user's comment requires the _Admin_ right.
-  - name: Tasks
-    description: |
-      Tasks attached to the metadocuments - simple to-do items (e.g. "replace the mold") created over a job, downtime or annotation. In the Portal, the tasks appear on the metadocument detail and in the task overview.
-
-      A task carries a `title`, an optional `dueDate` (the planned date) and `deadline` (the latest date it should be finished), and its completion state (`completedDate`). The metadocument shows its task as the read-only `task` property (`{id, initialTitle}`).
-
-      __Beta:__ the Tasks API is a Beta version - improvements are under development and the contract may still change. Do not build critical flows on it yet.
-
-      The management operations follow the asynchronous command pattern (`202 Accepted` + `location`, generic command results - see _Synchronous and asynchronous operations_ in the introduction). Every change assigns a new `commandGuid` to the task; the update and delete commands require the current value as `OriginGuid` - re-read the task before a change.
-
-      Reading the tasks requires the _View_ right of the measurement of the linked metadocument; creating, updating and deleting requires the _Contributor_ right, and the measurement must belong to the current customer account of the user.
-  - name: Downtime Codes
+  - name: Downtime Codes Dictionary
     description: |
       The downtime code dictionary classifies downtimes by their cause. Every measurement has its own list of codes; a downtime metadocument references a code through its `key` (the `DowntimeCodeKey` property, see Metadocuments).
 
@@ -188,11 +195,23 @@ tags:
       * `maxLength` - the maximal length of the downtime in seconds; a longer downtime is automatically split
 
       Reading the dictionary requires the _View_ right; the management commands require the _Admin_ right and follow the asynchronous command pattern (`202 Accepted` + `location`, see Command Results).
-  - name: Job Types
+  - name: Automatic Downtime Generation
     description: |
-      Job types represent the plan of production jobs (work orders) prepared for the measurements - the list of jobs ready to run. Operators pick jobs from this list on the shop floor; a started job is then represented as a job metadocument (see Metadocuments).
+      Configuration of the automatic inactivity detection: when the machine produces nothing for longer than the configured minimum stop length, a downtime metadocument is created automatically for the measurement. Each __generation rule__ defines the minimum stop length for one measurement.
 
-      The job type list is maintained by importing a CSV file. The import is an asynchronous command: the server responds with `202 Accepted` and the relative URL (`location`) of the command result (see Command Results). __The import replaces the whole job type list__ of every measurement affected by the file.
+      The management commands require the _Admin_ right and follow the asynchronous command pattern (`202 Accepted` + `location`, see Command Results).
+
+      __Naming note:__ The endpoint URLs and property names keep the historical name "downtime alarm" (`/DowntimeAlarm*Commands`, `ProductionAlarmTriggerIds`); it denotes the same concept as the automatic downtime generation.
+
+      __Note:__ The API currently has no endpoint for listing the configured generation rules. The `OriginGuids` value can be tracked by the integration itself: the guid of the add or update command (the last segment of the returned `location` URL) becomes the `commandGuid` of the rule. The `ProductionAlarmTriggerIds` are however not exposed by the API at all - they are available only in the Portal settings (Settings - Downtimes - Automatic downtimes generating). A command with a stale `OriginGuids` value finishes with the `Conflict` result.
+
+  - name: Job Plan
+    description: |
+      The job plan is the list of production jobs (work orders) prepared for the measurements - the jobs ready to run. Operators pick a planned job from the list on the shop floor; a started job is then represented as a job metadocument (see Metadocuments).
+
+      The endpoints of this group are historically named `/JobTypes` - a "job type" in the API contract means one planned job of the plan, not a category of jobs. The documentation uses the terms __job plan__ (the whole list) and __planned job__ (one item).
+
+      The job plan is maintained by importing a CSV file. The import is an asynchronous command: the server responds with `202 Accepted` and the relative URL (`location`) of the command result (see Command Results). __The import replaces the whole job plan__ of every measurement affected by the file.
 
       Required access rights: reading requires _View_ (the list is scoped to the user's current subscription); the CSV import requires the _DataAdmin_ right for the affected measurements.
 
@@ -203,7 +222,7 @@ tags:
       * supported columns: `Title` (required), `Setpoint`, `MeasurementId`, `PlannedFrom`, `PlannedTo`, `MaximumProductionCoefficient`, `MaximumProductionCoefficientDenominator`, `Description`, `AvailableTools`, `Operations`, `TargetAmount`, `MultipleInstanceId`, `IsMultipleInstanceOverlapDisabled`, `WorkOrderNumber`
       * `AvailableTools` and `Operations` may contain multiple values separated by a pipe (`|`)
       * `PlannedFrom`/`PlannedTo` are dates; the recommended format is UTC ISO 8601, e.g. `2026-07-02T06:50:00Z`
-      * custom fields: any column prefixed `Custom.` (e.g. `Custom.PartNumber`) is imported into the `customFields` of the job type
+      * custom fields: any column prefixed `Custom.` (e.g. `Custom.PartNumber`) is imported into the `customFields` of the planned job
       * numeric validations: `Setpoint`, `TargetAmount`, `MaximumProductionCoefficient` and its denominator must be greater than zero when provided
       * limits: at most 10 000 rows per measurement and 500 000 rows per file
       * `MeasurementId` determines the measurement of each row. __When the column is missing or empty in all rows, the same imported list is applied to every measurement where the user has the DataAdmin right__ - always provide the column unless this is really intended.
@@ -228,75 +247,26 @@ tags:
       The shift pauses are expressed as __offsets from the shift start__ in the .NET TimeSpan format `[dd.]hh:mm:ss` - e.g. a pause `{ "from": "04:00:00", "to": "04:15:00" }` of a shift starting at 06:00 UTC runs from 10:00 to 10:15 UTC.
 
       Reading the calendar requires the _View_ right; the management operations require the _DataAdmin_ right and follow the asynchronous command pattern (`202 Accepted` + `location`, see Command Results).
+  - name: Tasks (Beta)
+    description: |
+      Tasks attached to the metadocuments - simple to-do items (e.g. "replace the mold") created over a job, downtime or annotation. In the Portal, the tasks appear on the metadocument detail and in the task overview.
+
+      A task carries a `title`, an optional `dueDate` (the planned date) and `deadline` (the latest date it should be finished), and its completion state (`completedDate`). The metadocument shows its task as the read-only `task` property (`{id, initialTitle}`).
+
+      __Beta:__ the Tasks API is a Beta version - improvements are under development and the contract may still change. Do not build critical flows on it yet.
+
+      The management operations follow the asynchronous command pattern (`202 Accepted` + `location`, generic command results - see _Synchronous and asynchronous operations_ in the introduction). Every change assigns a new `commandGuid` to the task; the update and delete commands require the current value as `OriginGuid` - re-read the task before a change.
+
+      Reading the tasks requires the _View_ right of the measurement of the linked metadocument; creating, updating and deleting requires the _Contributor_ right, and the measurement must belong to the current customer account of the user.
   - name: Users & Subscriptions
     description: |
       Read-only endpoints providing the identity context of the API client.
 
       __Users__ resolve the user references appearing across the API - `creatorId` of metadocuments, `userId` of comments and production entries, or shift operators. The list and detail endpoints intentionally expose only the identifier and the display name; the full profile is available only for the token owner itself (`/Users/Me`).
 
-      __Subscriptions__ represent the customer accounts the user belongs to. Most collection endpoints (measurements, job types, users) are scoped to the user's __current subscription__.
+      __Subscriptions__ represent the customer accounts the user belongs to. Most collection endpoints (measurements, the job plan, users) are scoped to the user's __current subscription__.
 
       The user management itself (creating users, groups and access) is not part of this API - it is handled by the SCIM provisioning interface (see the SCIM chapter) or by the Plantyst Portal administration.
-  - name: Metrics & OEE
-    description: |
-      Computed production KPIs of the measurements. All metrics are returned as `{name, value}` pairs; a `value` is `null` when the metric cannot be computed from the available data.
-
-      * __Basic metrics__ (`/MeasurementMetricsQuery`) - the produced amount and the uptime share of a time range.
-      * __OEE metric set__ (`/MeasurementMetricsQuery2`, __Beta__) - the full OEE decomposition (availability x performance x quality) plus the fulfillment metrics. The planned production time comes from the measurement calendar (see Calendar) - without a calendar, the planned-time-based metrics are `null`. The endpoint is a Beta version - the set of returned metrics and their names may still change. The KPI terminology is explained in the [support center guide](https://support.plantyst.com/hc/cs/articles/17673220154908) (currently in Czech only).
-
-      Reading the metrics requires the _View_ right.
-  - name: Command Results
-    description: |
-      The results of the generic asynchronous commands. The pattern - `202 Accepted`, polling the `location` URL and the meaning of the final states - is described in _Synchronous and asynchronous operations_ in the introduction.
-
-      The metadocument commands use their own result resource - see `/MetadocumentCommandResults` in the Metadocuments group.
-
-  - name: Automatic Downtime Generation
-    description: |
-      Configuration of the automatic inactivity detection: when the machine produces nothing for longer than the configured minimum stop length, a downtime metadocument is created automatically for the measurement. Each __generation rule__ defines the minimum stop length for one measurement.
-
-      The management commands require the _Admin_ right and follow the asynchronous command pattern (`202 Accepted` + `location`, see Command Results).
-
-      __Naming note:__ The endpoint URLs and property names keep the historical name "downtime alarm" (`/DowntimeAlarm*Commands`, `ProductionAlarmTriggerIds`); it denotes the same concept as the automatic downtime generation.
-
-      __Note:__ The API currently has no endpoint for listing the configured generation rules. The `OriginGuids` value can be tracked by the integration itself: the guid of the add or update command (the last segment of the returned `location` URL) becomes the `commandGuid` of the rule. The `ProductionAlarmTriggerIds` are however not exposed by the API at all - they are available only in the Portal settings (Settings - Downtimes - Automatic downtimes generating). A command with a stale `OriginGuids` value finishes with the `Conflict` result.
-
-  - name: Measurement Configuration
-    description: |
-      Configuration and lifecycle resources of the measurements:
-
-      * __Tags__ - colored labels assigned to the measurements, used for filtering and grouping in the Portal. A tag is shared within the customer account. The tag operations are synchronous (no command result polling).
-      * __Shift systems__ - the shift schedules of a measurement (read-only in the API; managed in the Portal settings).
-      * __Measurement lifecycle__ - creating, updating, renaming and archiving the measurements. The update, rename and archive commands take the current `commandGuid` of the measurement as `OriginGuid` (see Measurements) - every change assigns a new value, so re-read the measurement before a change.
-      * __Data sources__ - the device inputs the measurements collect their data from: creating an input on a device and (un)assigning it to a measurement. The device and input identifiers are provided by Plantyst when the hardware is provisioned.
-
-      Reading requires the _View_ right of the measurement; managing the tags and updating or renaming a measurement requires the _Admin_ right; archiving a measurement and managing its data sources requires the _Owner_ right (plus administrator access to the device).
-  - name: Webhooks
-    description: |
-      Plantyst can notify an integration about metadocument changes by calling a registered HTTP callback URL (a webhook). Webhooks are set up on request at [support@plantyst.com](mailto:support@plantyst.com) - provide the callback URL and agree on the optional `configuration` value echoed with every delivery. The webhook fires for every metadocument change on all measurements accessible to the integration user; there is currently no self-service management API.
-
-      __Events__
-
-      * `MetadocumentCreate` - a metadocument was created
-      * `MetadocumentUpdate` - a metadocument was updated (including changes of its comments and production entries)
-      * `MetadocumentDelete` - a metadocument was deleted
-
-      __Delivery and acknowledgement__
-
-      The delivery is a `POST` request with an `application/json` body (see the webhook definition below). Acknowledge it with any `2xx` status code; other status codes and unreachable URLs cause several redelivery attempts before the delivery is dropped. Deliveries may occasionally arrive out of order or repeatedly - use `data.lastModified` and `data.eTag` to decide whether the payload is newer than your state.
-
-      __Security and the recommended integration pattern__
-
-      The delivery is not signed. Treat the payload as a notification and verify anything important by reading the current state through the REST API - the `authorization` object in the body carries a short-lived (1 hour) credential for that: use `authorization.value` as the `Authorization: Bearer {value}` header (or as an API key when `authorizationType` is `ApiKey`). Because the payload contains this credential, treat the whole request body as a secret.
-
-      __Detecting own changes__
-
-      The `commandGuid` of the event equals the command identifier returned to the API caller in the command `location` URL. An integration that also writes through the API can compare it with its own issued commands and skip the echo of its own changes.
-
-      __What changed__
-
-      The `appliedChanges` property carries a JSON Patch (RFC 6902) document describing the changes applied by the command - useful for reacting only to specific properties (e.g. a path `/DowntimeCode` means the downtime code changed). Note that the patch paths use PascalCase property names, unlike the camelCase payload.
-
   - name: SCIM Provisioning
     description: |
       A [SCIM 2.0](https://datatracker.ietf.org/doc/html/rfc7644) provisioning interface for identity providers (e.g. Microsoft Entra ID, Okta) and customer IT administrators - creating and deactivating users, managing groups and their membership.
@@ -327,7 +297,37 @@ tags:
       * Requests and responses use `application/scim+json` (plain `application/json` is accepted as well).
       * Updates use the SCIM `PatchOp` message; `PUT` replacement is not supported (`501 Not Implemented`).
       * The discovery endpoints (`/ServiceProviderConfig`, `/Schemas`, `/ResourceTypes`) are not implemented.
+  - name: Webhooks
+    description: |
+      Plantyst can notify an integration about metadocument changes by calling a registered HTTP callback URL (a webhook). Webhooks are set up on request at [support@plantyst.com](mailto:support@plantyst.com) - provide the callback URL and agree on the optional `configuration` value echoed with every delivery. The webhook fires for every metadocument change on all measurements accessible to the integration user; there is currently no self-service management API.
 
+      __Events__
+
+      * `MetadocumentCreate` - a metadocument was created
+      * `MetadocumentUpdate` - a metadocument was updated (including changes of its comments and production entries)
+      * `MetadocumentDelete` - a metadocument was deleted
+
+      __Delivery and acknowledgement__
+
+      The delivery is a `POST` request with an `application/json` body (see the webhook definition below). Acknowledge it with any `2xx` status code; other status codes and unreachable URLs cause several redelivery attempts before the delivery is dropped. Deliveries may occasionally arrive out of order or repeatedly - use `data.lastModified` and `data.eTag` to decide whether the payload is newer than your state.
+
+      __Security and the recommended integration pattern__
+
+      The delivery is not signed. Treat the payload as a notification and verify anything important by reading the current state through the REST API - the `authorization` object in the body carries a short-lived (1 hour) credential for that: use `authorization.value` as the `Authorization: Bearer {value}` header (or as an API key when `authorizationType` is `ApiKey`). Because the payload contains this credential, treat the whole request body as a secret.
+
+      __Detecting own changes__
+
+      The `commandGuid` of the event equals the command identifier returned to the API caller in the command `location` URL. An integration that also writes through the API can compare it with its own issued commands and skip the echo of its own changes.
+
+      __What changed__
+
+      The `appliedChanges` property carries a JSON Patch (RFC 6902) document describing the changes applied by the command - useful for reacting only to specific properties (e.g. a path `/DowntimeCode` means the downtime code changed). Note that the patch paths use PascalCase property names, unlike the camelCase payload.
+
+  - name: Command Results
+    description: |
+      The results of the generic asynchronous commands. The pattern - `202 Accepted`, polling the `location` URL and the meaning of the final states - is described in _Synchronous and asynchronous operations_ in the introduction.
+
+      The metadocument commands use their own result resource - see `/MetadocumentCommandResults` in the Metadocuments group.
 paths:
   /OAuth/Authorize:
     get:
@@ -590,10 +590,619 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  # ---------------------------------------------------------------------------
+  # Measurements - administration (lifecycle, shift systems, tags, data sources)
+  # ---------------------------------------------------------------------------
+  /MeasurementAddCommands:
+    post:
+      operationId: addMeasurement
+      tags: [Measurements]
+      summary: Create measurement
+      description: |
+        Creates a new measurement over a data input of a device. The operation is an asynchronous command (`202 Accepted` + `location` of the command result).
+
+        The `DeviceId` and `InputId` identify the hardware input the measurement will collect the data from - the identifiers are provided by Plantyst when the device is provisioned (contact the support when in doubt). The measurement is placed under the given hierarchical location, or directly under the root of the customer account when `HierarchicalLocationId` is omitted.
+
+        Required rights: administrator access to the device within the current customer account of the user.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [BaseTitle, TimeZoneId, MeasurementType, DeviceId, InputId]
+              properties:
+                BaseTitle:
+                  type: string
+                  description: The base title of the measurement (without the location/machine-number prefixes).
+                TimeZoneId:
+                  type: string
+                  description: The Windows time zone identifier of the measurement (e.g. `Central Europe Standard Time`); must be convertible to an IANA code.
+                MeasurementType:
+                  type: integer
+                  enum: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+                  description: "The type of the measured quantity: `1` Speed (continuous production), `2` Rate (number of pieces), `3` ProductCycle (production cycle count), `4` RunTime, `5` Temperature, `6` Humidity, `7` Power, `8` Flow, `9` Workload, `10` Rotation."
+                DeviceId:
+                  type: integer
+                InputId:
+                  type: integer
+                  description: The input number of the device the measurement collects the data from.
+                PrefixLabel:
+                  type: [string, "null"]
+                  description: An optional prefix (machine number) displayed before the measurement title.
+                HierarchicalLocationId:
+                  type: [integer, "null"]
+                  description: The hierarchical location (group) the measurement is placed under; the root of the customer account when omitted. Must belong to the customer account of the user.
+                ShiftEndDowntimeAction:
+                  type: [integer, "null"]
+                  enum: [0, 1]
+                  description: "What happens to a downtime running at the end of a shift: `0` Continue (default), `1` Terminate."
+            example:
+              BaseTitle: Packing line 1
+              TimeZoneId: Central Europe Standard Time
+              MeasurementType: 2
+              DeviceId: 123
+              InputId: 3
+              PrefixLabel: "L1"
+              HierarchicalLocationId: 618
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The title, prefix, measurement type or time zone is invalid, or the hierarchical location does not belong to the customer account of the user.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user does not have administrator access to the device.
+
+  /MeasurementUpdateCommands:
+    post:
+      operationId: updateMeasurement
+      tags: [Measurements]
+      summary: Update measurement
+      description: |
+        Updates the configuration of the measurement. Only the properties present in the payload are changed (merge semantics); sending a payload with no actual change fails with `400 Bad Request`.
+
+        `OriginGuid` must be the current `commandGuid` of the measurement (see Measurements) - a stale value fails synchronously with `409 Conflict`; re-read the measurement before a change.
+
+        `HierarchicalLocationId` present with a `null` value moves the measurement back under the root of the customer account; a new location must belong to the same customer account.
+
+        Required access right: _Admin_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementId, OriginGuid]
+              properties:
+                MeasurementId:
+                  type: integer
+                OriginGuid:
+                  type: string
+                  format: uuid
+                  description: The current `commandGuid` of the measurement.
+                BaseTitle:
+                  type: string
+                  description: The base title of the measurement.
+                PrefixLabel:
+                  type: [string, "null"]
+                  description: The prefix (machine number) displayed before the measurement title.
+                HierarchicalLocationId:
+                  type: [integer, "null"]
+                  description: The hierarchical location (group) of the measurement; `null` moves it under the root of the customer account.
+                ShiftEndDowntimeAction:
+                  type: [integer, "null"]
+                  enum: [0, 1]
+                  description: "What happens to a downtime running at the end of a shift: `0` Continue, `1` Terminate."
+              # Internal-only payload properties, intentionally not documented
+              # (they require internal Plantyst roles):
+              # * MeasurementType - changing to a type with a different quantity
+              #   type requires the CustomerCare role (403 otherwise); a change
+              #   within the same quantity type counts as "no change" (400)
+              # * TimeZoneId - changing the time zone requires the Administrator
+              #   role (403 otherwise); validated as a Windows time zone id
+              #   convertible to an IANA code
+            example:
+              MeasurementId: 3
+              OriginGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
+              PrefixLabel: "L1"
+              HierarchicalLocationId: 620
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The payload contains no actual change, a title is invalid, or the hierarchical location does not belong to the same customer account.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The `OriginGuid` does not equal the current `commandGuid` of the measurement.
+
+  /MeasurementShiftSystems:
+    get:
+      operationId: getMeasurementShiftSystems
+      tags: [Measurements]
+      summary: List shift systems
+      description: |
+        Returns the shift systems of the measurement, ordered by their validity: the first item is always the built-in default shift system (`id` `0`, three 8-hour shifts), followed by the configured systems with their `validFrom` (a configured system applies from its `validFrom` until the `validFrom` of a newer one).
+
+        A shift is defined by the start and end hour and minute of the day; an overnight shift wraps midnight (e.g. `hourFrom: 22`, `hourTo: 6`). The optional `type` is the display label of the shift.
+
+        The shift systems are read-only in the API - they are managed in the Portal settings.
+
+        Required access right: _View_.
+      parameters:
+        - name: measurementId
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The shift systems of the measurement.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+                  _embedded:
+                    type: object
+                    properties:
+                      measurementShiftSystem:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              description: The shift system identifier; `0` for the built-in default system.
+                            validFrom:
+                              type: [string, "null"]
+                              format: date-time
+                              description: The start of the validity of the system.
+                            _links:
+                              $ref: "#/components/schemas/HalLinks"
+                            _embedded:
+                              type: object
+                              properties:
+                                shift:
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: integer
+                                      hourFrom:
+                                        type: integer
+                                      minuteFrom:
+                                        type: integer
+                                      hourTo:
+                                        type: integer
+                                      minuteTo:
+                                        type: integer
+                                      type:
+                                        type: string
+                                        description: The optional display label of the shift.
+                                      _links:
+                                        $ref: "#/components/schemas/HalLinks"
+              example:
+                _links:
+                  self:
+                    href: /Api/MeasurementShiftSystems
+                _embedded:
+                  measurementShiftSystem:
+                    - id: 1418
+                      validFrom: "2014-12-31T23:00:00Z"
+                      _links:
+                        self:
+                          href: /Api/MeasurementShiftSystems/1418
+                      _embedded:
+                        shift:
+                          - id: 3581
+                            hourFrom: 21
+                            minuteFrom: 0
+                            hourTo: 6
+                            minuteTo: 0
+                            _links:
+                              self:
+                                href: /Api/Shift/3581
+                          - id: 3582
+                            hourFrom: 6
+                            minuteFrom: 0
+                            hourTo: 14
+                            minuteTo: 0
+                            _links:
+                              self:
+                                href: /Api/Shift/3582
+                          - id: 3583
+                            hourFrom: 14
+                            minuteFrom: 0
+                            hourTo: 21
+                            minuteTo: 0
+                            _links:
+                              self:
+                                href: /Api/Shift/3583
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /MeasurementTags:
+    get:
+      operationId: getMeasurementTags
+      tags: [Measurements]
+      summary: List tags
+      description: |
+        Returns all tags available in the customer account of the given measurement (not only the tags assigned to it).
+
+        Required access right: _View_.
+      parameters:
+        - name: measurementId
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The tags of the customer account.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+                  _embedded:
+                    type: object
+                    properties:
+                      tag:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Tag"
+              example:
+                _links:
+                  self:
+                    href: /Api/Tags
+                _embedded:
+                  tag:
+                    - id: "356"
+                      title: Priority
+                      color: "#1ABC9C"
+                      _links:
+                        self:
+                          href: /Api/Tag/356
+                    - id: "702"
+                      title: RS485
+                      color: "#9B59B6"
+                      _links:
+                        self:
+                          href: /Api/Tag/702
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createMeasurementTag
+      tags: [Measurements]
+      summary: Create tag and assign it
+      description: |
+        Creates a new tag and assigns it to the measurement. Unlike the metadocument operations, the tag operations are synchronous - the response directly contains the created tag.
+
+        Required access right: _Admin_.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementId, Title, Color]
+              properties:
+                MeasurementId:
+                  type: integer
+                Title:
+                  type: string
+                Color:
+                  type: string
+                  description: "The HTML color of the tag (e.g. `#3498DB`)."
+            example:
+              MeasurementId: 3
+              Title: Priority
+              Color: "#3498DB"
+      responses:
+        "200":
+          description: The created tag.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/Tag"
+              example:
+                id: "736"
+                title: Priority
+                color: "#3498DB"
+                _links:
+                  self:
+                    href: /Api/Tag/736
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /MeasurementTags/{measurementId}/{tagId}:
+    parameters:
+      - name: measurementId
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: tagId
+        in: path
+        required: true
+        schema:
+          type: integer
+    put:
+      operationId: assignMeasurementTag
+      tags: [Measurements]
+      summary: Assign tag
+      description: |
+        Assigns an existing tag to the measurement.
+
+        Required access right: _Admin_.
+      responses:
+        "200":
+          description: The tag was already assigned to the measurement; nothing changed.
+        "201":
+          description: The tag was assigned to the measurement.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The tag or the measurement does not exist.
+    patch:
+      operationId: updateMeasurementTag
+      tags: [Measurements]
+      summary: Update tag
+      description: |
+        Updates the title and the color of the tag. Note that the change affects the tag itself - it is visible on every measurement the tag is assigned to.
+
+        Required access right: _Admin_.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Title:
+                  type: string
+                Color:
+                  type: string
+                  description: "The HTML color of the tag (e.g. `#123456`)."
+            example:
+              Title: Priority A
+              Color: "#123456"
+      responses:
+        "200":
+          description: The tag was updated.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The tag is not assigned to the measurement.
+    delete:
+      operationId: unassignMeasurementTag
+      tags: [Measurements]
+      summary: Remove tag assignment
+      description: |
+        Removes the assignment of the tag to the measurement. Removing the last assignment deletes the tag from the customer account entirely.
+
+        Required access right: _Admin_.
+      responses:
+        "200":
+          description: The assignment was removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The tag is not assigned to the measurement.
+
+  /MeasurementsArchiveCommands:
+    post:
+      operationId: archiveMeasurement
+      tags: [Measurements]
+      summary: Archive measurement
+      description: |
+        Archives the measurement (it stops collecting data and disappears from the active lists; the historical data stay accessible). An archived measurement appears with `archived: true` in `/Measurements?archived=true`.
+
+        The measurement must not have any assigned data source - unassign the data sources first (`/MeasurementDataSourceUnassignCommands`), otherwise the request fails with `403 Forbidden`.
+
+        `OriginGuid` must be the current `commandGuid` of the measurement.
+
+        Required access right: _Owner_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementId, OriginGuid]
+              properties:
+                MeasurementId:
+                  type: integer
+                OriginGuid:
+                  type: string
+                  format: uuid
+                  description: The current `commandGuid` of the measurement.
+            example:
+              MeasurementId: 3
+              OriginGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user does not have the Owner right, or the measurement still has an assigned data source.
+
+  /DataSourceAddCommands:
+    post:
+      operationId: addDataSource
+      tags: [Measurements]
+      summary: Create data source
+      description: |
+        Creates a new data source (a device input) on the device, and optionally assigns it to a measurement right away.
+
+        * `Type` - only `DeviceInput` is currently supported.
+        * `Configuration` - a JSON document __serialized as a string__. It must contain the `InputId` (the input number to create on the device; must not exist yet), and may contain `DataSourceRequirements` - an array of `{ParameterName, Value}` adjustments (e.g. `SamplingPeriod`, `InputType`).
+
+        A violation of the configuration rules (unsupported type, invalid JSON, missing or duplicate `InputId`) finishes with the `DataError` command result.
+
+        Required rights: administrator access to the device within the current customer account; with `MeasurementId` also the _Owner_ right of the measurement.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [DeviceId, Type, Configuration]
+              properties:
+                DeviceId:
+                  type: integer
+                Type:
+                  type: string
+                  enum: [DeviceInput]
+                Configuration:
+                  type: string
+                  description: The JSON configuration serialized as a string (see the description).
+                MeasurementId:
+                  type: [integer, "null"]
+                  description: When set, the created data source is immediately assigned to the measurement.
+            example:
+              DeviceId: 123
+              Type: DeviceInput
+              Configuration: '{"InputId": 3, "DataSourceRequirements": [{"ParameterName": "SamplingPeriod", "Value": 60}]}'
+              MeasurementId: 3
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The `Type` or `Configuration` is missing.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user does not have administrator access to the device, or the Owner right of the measurement.
+
+  /MeasurementDataSourceAssignCommands:
+    post:
+      operationId: assignMeasurementDataSource
+      tags: [Measurements]
+      summary: Assign data source
+      description: |
+        Assigns an existing data source (device input) to the measurement - the measurement starts collecting the data of the input.
+
+        The compatibility of the device board firmware with the measurement is checked first: an incompatible combination fails synchronously with `409 Conflict`, unless `IgnoreFilterIncompatibility: true` is set.
+
+        Required rights: the _Owner_ right of the measurement (within the current customer account) and administrator access to the device of the data source.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementId, DataSourceId]
+              properties:
+                MeasurementId:
+                  type: integer
+                DataSourceId:
+                  type: integer
+                  description: The identifier of the data source (device input).
+                IgnoreFilterIncompatibility:
+                  type: boolean
+                  description: Skip the board firmware compatibility check.
+            example:
+              MeasurementId: 3
+              DataSourceId: 456
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user does not have the Owner right of the measurement or administrator access to the device.
+        "409":
+          description: The device board firmware is not compatible with the measurement (use `IgnoreFilterIncompatibility` to skip the check).
+
+  /MeasurementDataSourceUnassignCommands:
+    post:
+      operationId: unassignMeasurementDataSource
+      tags: [Measurements]
+      summary: Unassign data source
+      description: |
+        Removes the assignment of the data source (device input) to the measurement - the measurement stops collecting the data of the input. Unassigning all data sources is also the precondition of archiving a measurement.
+
+        Required rights: the _Owner_ right of the measurement and administrator access to the device of the data source; the data source must currently be assigned to the measurement.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementId, DataSourceId]
+              properties:
+                MeasurementId:
+                  type: integer
+                DataSourceId:
+                  type: integer
+                  description: The identifier of the data source (device input).
+            example:
+              MeasurementId: 3
+              DataSourceId: 456
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user does not have the Owner right of the measurement, the data source is not assigned to it, or the user does not have administrator access to the device.
+
+  # Internal-only endpoints, intentionally not documented (they are bound to
+  # internal Plantyst roles - the CustomerCare role must not be mentioned in
+  # the public documentation):
+  # * POST Api/MeasurementReaggregationCommands - recompute the aggregations of
+  #   a measurement ({MeasurementId, FromDate?, TimeSeriesNames?}; requires the
+  #   Admin right AND the CustomerCare role)
+  # * POST Api/MeasurementDetailReportGenerateCommands - generate the PDF detail
+  #   report ({RequestTime with offset = the time zone of the rendering,
+  #   Queries: [{MeasurementId, From, To, View - e.g. "Base.MinuteSet"}]};
+  #   View right; the controller WAITS for the rendering, so the 202 arrives
+  #   after ~10 s and the command result is already Success with an extra
+  #   `downloadUrl` field ("/Report/{date}-{guid}.pdf?ticks=..."); the download
+  #   is an MVC route accepting only the Portal cookie session - an API key or
+  #   a bearer token gets the login page, which makes it of little use to pure
+  #   API clients; verified live 2026-07-12)
+
   /MeasurementTimeSeriesAggregationsQuery:
     post:
       operationId: listMeasurementTimeSeriesAggregations
-      tags: [Measurement Data]
+      tags: [Measurement Data & Metrics]
       summary: List Measurement Time Series Aggregation
       description: |
         Gets the list of Time Series Aggregation items for the given measurements.
@@ -732,6 +1341,163 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           description: The user does not have access to all queried measurements. The response has an empty body.
+
+  # ---------------------------------------------------------------------------
+  # Measurement Data & Metrics - computed KPIs
+  # ---------------------------------------------------------------------------
+  /MeasurementMetricsQuery:
+    post:
+      operationId: queryMeasurementMetrics
+      tags: [Measurement Data & Metrics]
+      summary: Query basic metrics
+      description: |
+        Computes the basic metrics of the given measurements and time ranges:
+
+        * `Production` - the amount produced in the range, in the units of the measured quantity
+        * `Uptime` - the share of the range the machine was running, in percent
+
+        Required access right: _View_ (for all queried measurements, otherwise `403 Forbidden`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MetricsQueryPayload"
+            example:
+              Queries:
+                - MeasurementId: 3
+                  From: "2026-07-08T00:00:00Z"
+                  To: "2026-07-09T00:00:00Z"
+                  MaximumCount: 100
+      responses:
+        "200":
+          description: The metrics, one result per query.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsQueryResult"
+              example:
+                results:
+                  - query:
+                      measurementId: 3
+                      from: "2026-07-08T00:00:00Z"
+                      to: "2026-07-09T00:00:00Z"
+                      maximumCount: 100
+                    results:
+                      - name: Production
+                        value: 674078.0
+                      - name: Uptime
+                        value: 65.486
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /MeasurementMetricsQuery2:
+    post:
+      operationId: queryOeeMetricsSet
+      tags: [Measurement Data & Metrics]
+      summary: Query OEE metric set (Beta)
+      description: |
+        Computes the OEE and fulfillment metric set of the given measurements and time ranges. The terminology follows the KPI guide in the Plantyst support center - see [Klíčové ukazatele výkonnosti měřené veličiny](https://support.plantyst.com/hc/cs/articles/17673220154908) (currently available in Czech only).
+
+        The returned metrics and their relations:
+
+        * `PlannedTime` - the __planned production time__, in seconds: the shift time from the measurement calendar (see Calendar) reduced by the planned downtimes (downtime codes flagged with _Planned time reduction_, including breaks).
+        * `RunTime` - the __real production time__, in seconds: the machine run time from the collected signal, cleared of all non-production times (including those too short to be reported as downtimes) and reduced by the downtimes flagged with _Production time reduction_.
+        * `Availability` (dostupnost) = `RunTime` / `PlannedTime`, a 0-1 ratio.
+        * `Production` - the __real production__: the measured amount including the production coefficient, adjusted by the production entries (corrections are added; when both OK and NOK pieces are recorded, `Production` = `ok` + `nok`).
+        * `ProductionCapacity` - the __planned production__: the production expected for the real production time at the `Setpoint` rate (units per minute) of the running jobs; for jobs without a setpoint their real production is used.
+        * `Performance` (výkon) = `Production` / `ProductionCapacity`; meaningful when the jobs carry a `Setpoint`, and can exceed 1.
+        * `ok`, `nok` - the good and bad pieces from the production entries. When not recorded, they are derived from `Production` (`ok` = `Production` - `nok`; with no entries at all, `ok` = `Production` and `nok` = 0).
+        * `Quality` (kvalita) = `ok` / `Production`, a 0-1 ratio.
+        * `OEE` = `Availability` × `Performance` × `Quality`; in the product, `Performance` is capped at 1 (as the KPI guide recommends) and a `null` `Performance` or `Quality` counts as 1.
+        * `PlneniCapacity`, `Plneni` - the __fulfillment__ metrics (the property names are historical Czech terms for "fulfillment"): `PlneniCapacity` is the production expected for the whole planned production time at the fulfillment norm rate (the `NormaPlneni` custom field of the job, falling back to its `Setpoint`), and `Plneni` = `ok` / `PlneniCapacity` - the fulfillment of the plan.
+        * `LastCycleTime` - the duration of the last production cycle, in seconds per piece.
+
+        A metric `value` is `null` when it cannot be computed - typically all planned-time-based metrics (`Availability`, `Performance`, `OEE`, ...) when the queried range contains no planned production time (the measurement calendar is empty).
+
+        __Beta:__ the endpoint is a Beta version - the set of returned metrics and their names may still change.
+
+        Required access right: _View_ (for all queried measurements, otherwise `403 Forbidden`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MetricsQueryPayload"
+            example:
+              Queries:
+                - MeasurementId: 3
+                  From: "2026-07-08T00:00:00Z"
+                  To: "2026-07-09T00:00:00Z"
+                  MaximumCount: 100
+      responses:
+        "200":
+          description: The metric sets, one result per query.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsQueryResult"
+              example:
+                results:
+                  - query:
+                      measurementId: 3
+                      from: "2026-07-08T00:00:00Z"
+                      to: "2026-07-09T00:00:00Z"
+                      maximumCount: 100
+                    results:
+                      - name: RunTime
+                        value: 21540.0
+                      - name: PlannedTime
+                        value: 28800.0
+                      - name: Availability
+                        value: 0.748
+                      - name: Production
+                        value: 3222.0
+                      - name: ProductionCapacity
+                        value: 3949.0
+                      - name: Performance
+                        value: 0.816
+                      - name: nok
+                        value: 12.0
+                      - name: ok
+                        value: 3210.0
+                      - name: Quality
+                        value: 0.996
+                      - name: PlneniCapacity
+                        value: 4320.0
+                      - name: Plneni
+                        value: 0.743
+                      - name: OEE
+                        value: 0.608
+                      - name: LastCycleTime
+                        value: 0.153
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # Internal-only endpoints, intentionally not documented (in preparation, not
+  # yet public; the contract may still change):
+  # * POST Api/MeasurementMetricQuotasQuery - query of quarterly metric quotas
+  #   (Queries[{MeasurementId, From, To, MetricName}] -> results[{query, result:{totalQuota}}];
+  #   totalQuota is pro-rated to the queried range)
+  # * POST Api/MeasurementMetricQuotas - set a quarterly quota (Admin right;
+  #   {MeasurementId, From = quarter start in the measurement time zone, TimeSpan: "q",
+  #   MetricName, Value}; 201 with empty body for both create and update;
+  #   Value null zeroes the quota but does not remove the record)
+  # * POST Api/TargetObjectiveAddCommands / TargetObjectiveUpdateCommands /
+  #   TargetObjectiveArchiveCommands / TargetObjectiveDeleteCommands - management
+  #   of the KPI target objectives; Add: {Metric, Title, Scope: {Id}, Periods:
+  #   [{ValidFrom, Period, Rules: [{Criterion (Span), Color, Priority}]}]},
+  #   Update takes TargetObjectiveId + the same shape, Archive/Delete take
+  #   {TargetObjectiveId}; the feature is still heavily in progress - keep
+  #   internal until it stabilizes
 
   # ---------------------------------------------------------------------------
   # Metadocuments
@@ -1774,7 +2540,7 @@ paths:
 
         __Configuration__
 
-        The CSV parsing can be customized per customer account on request - contact the Plantyst support. Configurable options: the time zone the timestamps are interpreted in, the culture used for parsing dates and numbers, and custom column names mapped to the expected ones. (The job types import supports the same time zone and culture configuration - see `/JobTypesImportCommands`.)
+        The CSV parsing can be customized per customer account on request - contact the Plantyst support. Configurable options: the time zone the timestamps are interpreted in, the culture used for parsing dates and numbers, and custom column names mapped to the expected ones. (The job plan import supports the same time zone and culture configuration - see `/JobTypesImportCommands`.)
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
@@ -1819,7 +2585,7 @@ paths:
   /TaskEntries:
     get:
       operationId: getTaskEntries
-      tags: [Tasks]
+      tags: [Tasks (Beta)]
       summary: List tasks (Beta)
       description: |
         Returns the tasks of the customer account of the user, together with the users and the metadocuments they belong to (in `_embedded`). With `fromCompletedDate`, the completed tasks are limited to those completed at or after the given time (open tasks are always included); without it, the whole task history is returned.
@@ -1903,7 +2669,7 @@ paths:
           $ref: "#/components/responses/Unauthorized"
     post:
       operationId: getTaskEntriesByIds
-      tags: [Tasks]
+      tags: [Tasks (Beta)]
       summary: Get tasks by identifiers (Beta)
       description: |
         Returns the given tasks (the body is a plain JSON array of the task identifiers), in the same shape as the task list.
@@ -1931,7 +2697,7 @@ paths:
   /TaskEntries/{id}:
     get:
       operationId: getTaskEntry
-      tags: [Tasks]
+      tags: [Tasks (Beta)]
       summary: Get task (Beta)
       description: |
         Returns the task with the embedded users and metadocument.
@@ -1980,7 +2746,7 @@ paths:
   /TaskEntryAddCommands:
     post:
       operationId: addTaskEntry
-      tags: [Tasks]
+      tags: [Tasks (Beta)]
       summary: Create task (Beta)
       description: |
         Creates a task attached to the given metadocument. The operation is an asynchronous command (`202 Accepted` + `location` of the command result).
@@ -2028,7 +2794,7 @@ paths:
   /TaskEntryUpdateCommands:
     post:
       operationId: updateTaskEntry
-      tags: [Tasks]
+      tags: [Tasks (Beta)]
       summary: Update task (Beta)
       description: |
         Updates the task. Only the properties present in the payload are changed (merge semantics):
@@ -2084,7 +2850,7 @@ paths:
   /TaskEntryDeleteCommands:
     post:
       operationId: deleteTaskEntry
-      tags: [Tasks]
+      tags: [Tasks (Beta)]
       summary: Delete task (Beta)
       description: |
         Deletes the task (a soft delete - the task disappears from the lists).
@@ -2127,7 +2893,7 @@ paths:
   /DowntimeDictionary:
     get:
       operationId: getDowntimeDictionary
-      tags: [Downtime Codes]
+      tags: [Downtime Codes Dictionary]
       summary: Get downtime code dictionary
       description: |
         Gets the downtime code dictionary for the given set of measurements. The response embeds two collections:
@@ -2229,7 +2995,7 @@ paths:
   /DowntimeCodeAddCommands:
     post:
       operationId: addDowntimeCode
-      tags: [Downtime Codes]
+      tags: [Downtime Codes Dictionary]
       summary: Add downtime code
       description: |
         Creates a new downtime code on the given measurements.
@@ -2273,7 +3039,7 @@ paths:
   /DowntimeCodeUpdateCommands:
     post:
       operationId: updateDowntimeCode
-      tags: [Downtime Codes]
+      tags: [Downtime Codes Dictionary]
       summary: Update downtime code
       description: |
         Updates the downtime code identified by `OriginGuids` and `DowntimeCodeIds`. Only the provided properties are changed - omitted optional properties keep their current values (`Code` and `Title` are required even when unchanged).
@@ -2322,7 +3088,7 @@ paths:
   /DowntimeCodeDeleteCommands:
     post:
       operationId: deleteDowntimeCode
-      tags: [Downtime Codes]
+      tags: [Downtime Codes Dictionary]
       summary: Delete downtime code
       description: |
         Deletes (deactivates) the downtime codes identified by `OriginGuids` and `DowntimeCodeIds`. The delete is a soft delete - the code gets a `validTo` timestamp and stays in the dictionary for historical downtimes. It can be restored later.
@@ -2364,7 +3130,7 @@ paths:
   /DowntimeCodeRestoreCommands:
     post:
       operationId: restoreDowntimeCode
-      tags: [Downtime Codes]
+      tags: [Downtime Codes Dictionary]
       summary: Restore downtime code
       description: |
         Restores previously deleted downtime codes (clears their `validTo`).
@@ -2411,7 +3177,7 @@ paths:
   /DowntimeCodeCopyCommands:
     post:
       operationId: copyDowntimeCodes
-      tags: [Downtime Codes]
+      tags: [Downtime Codes Dictionary]
       summary: Copy downtime codes between measurements
       description: |
         Copies downtime codes from the origin measurement to the target measurements. The `CopyAction` determines the behavior:
@@ -2593,668 +3359,15 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
   # ---------------------------------------------------------------------------
-  # Measurement Configuration
-  # ---------------------------------------------------------------------------
-  /MeasurementTags:
-    get:
-      operationId: getMeasurementTags
-      tags: [Measurement Configuration]
-      summary: List tags
-      description: |
-        Returns all tags available in the customer account of the given measurement (not only the tags assigned to it).
-
-        Required access right: _View_.
-      parameters:
-        - name: measurementId
-          in: query
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: The tags of the customer account.
-          content:
-            application/hal+json:
-              schema:
-                type: object
-                properties:
-                  _links:
-                    $ref: "#/components/schemas/HalLinks"
-                  _embedded:
-                    type: object
-                    properties:
-                      tag:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/Tag"
-              example:
-                _links:
-                  self:
-                    href: /Api/Tags
-                _embedded:
-                  tag:
-                    - id: "356"
-                      title: Priority
-                      color: "#1ABC9C"
-                      _links:
-                        self:
-                          href: /Api/Tag/356
-                    - id: "702"
-                      title: RS485
-                      color: "#9B59B6"
-                      _links:
-                        self:
-                          href: /Api/Tag/702
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-    post:
-      operationId: createMeasurementTag
-      tags: [Measurement Configuration]
-      summary: Create tag and assign it
-      description: |
-        Creates a new tag and assigns it to the measurement. Unlike the metadocument operations, the tag operations are synchronous - the response directly contains the created tag.
-
-        Required access right: _Admin_.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [MeasurementId, Title, Color]
-              properties:
-                MeasurementId:
-                  type: integer
-                Title:
-                  type: string
-                Color:
-                  type: string
-                  description: "The HTML color of the tag (e.g. `#3498DB`)."
-            example:
-              MeasurementId: 3
-              Title: Priority
-              Color: "#3498DB"
-      responses:
-        "200":
-          description: The created tag.
-          content:
-            application/hal+json:
-              schema:
-                $ref: "#/components/schemas/Tag"
-              example:
-                id: "736"
-                title: Priority
-                color: "#3498DB"
-                _links:
-                  self:
-                    href: /Api/Tag/736
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /MeasurementTags/{measurementId}/{tagId}:
-    parameters:
-      - name: measurementId
-        in: path
-        required: true
-        schema:
-          type: integer
-      - name: tagId
-        in: path
-        required: true
-        schema:
-          type: integer
-    put:
-      operationId: assignMeasurementTag
-      tags: [Measurement Configuration]
-      summary: Assign tag
-      description: |
-        Assigns an existing tag to the measurement.
-
-        Required access right: _Admin_.
-      responses:
-        "200":
-          description: The tag was already assigned to the measurement; nothing changed.
-        "201":
-          description: The tag was assigned to the measurement.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          description: The tag or the measurement does not exist.
-    patch:
-      operationId: updateMeasurementTag
-      tags: [Measurement Configuration]
-      summary: Update tag
-      description: |
-        Updates the title and the color of the tag. Note that the change affects the tag itself - it is visible on every measurement the tag is assigned to.
-
-        Required access right: _Admin_.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                Title:
-                  type: string
-                Color:
-                  type: string
-                  description: "The HTML color of the tag (e.g. `#123456`)."
-            example:
-              Title: Priority A
-              Color: "#123456"
-      responses:
-        "200":
-          description: The tag was updated.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          description: The tag is not assigned to the measurement.
-    delete:
-      operationId: unassignMeasurementTag
-      tags: [Measurement Configuration]
-      summary: Remove tag assignment
-      description: |
-        Removes the assignment of the tag to the measurement. Removing the last assignment deletes the tag from the customer account entirely.
-
-        Required access right: _Admin_.
-      responses:
-        "200":
-          description: The assignment was removed.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          description: The tag is not assigned to the measurement.
-
-  /MeasurementShiftSystems:
-    get:
-      operationId: getMeasurementShiftSystems
-      tags: [Measurement Configuration]
-      summary: List shift systems
-      description: |
-        Returns the shift systems of the measurement, ordered by their validity: the first item is always the built-in default shift system (`id` `0`, three 8-hour shifts), followed by the configured systems with their `validFrom` (a configured system applies from its `validFrom` until the `validFrom` of a newer one).
-
-        A shift is defined by the start and end hour and minute of the day; an overnight shift wraps midnight (e.g. `hourFrom: 22`, `hourTo: 6`). The optional `type` is the display label of the shift.
-
-        The shift systems are read-only in the API - they are managed in the Portal settings.
-
-        Required access right: _View_.
-      parameters:
-        - name: measurementId
-          in: query
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: The shift systems of the measurement.
-          content:
-            application/hal+json:
-              schema:
-                type: object
-                properties:
-                  _links:
-                    $ref: "#/components/schemas/HalLinks"
-                  _embedded:
-                    type: object
-                    properties:
-                      measurementShiftSystem:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            id:
-                              type: integer
-                              description: The shift system identifier; `0` for the built-in default system.
-                            validFrom:
-                              type: [string, "null"]
-                              format: date-time
-                              description: The start of the validity of the system.
-                            _links:
-                              $ref: "#/components/schemas/HalLinks"
-                            _embedded:
-                              type: object
-                              properties:
-                                shift:
-                                  type: array
-                                  items:
-                                    type: object
-                                    properties:
-                                      id:
-                                        type: integer
-                                      hourFrom:
-                                        type: integer
-                                      minuteFrom:
-                                        type: integer
-                                      hourTo:
-                                        type: integer
-                                      minuteTo:
-                                        type: integer
-                                      type:
-                                        type: string
-                                        description: The optional display label of the shift.
-                                      _links:
-                                        $ref: "#/components/schemas/HalLinks"
-              example:
-                _links:
-                  self:
-                    href: /Api/MeasurementShiftSystems
-                _embedded:
-                  measurementShiftSystem:
-                    - id: 1418
-                      validFrom: "2014-12-31T23:00:00Z"
-                      _links:
-                        self:
-                          href: /Api/MeasurementShiftSystems/1418
-                      _embedded:
-                        shift:
-                          - id: 3581
-                            hourFrom: 21
-                            minuteFrom: 0
-                            hourTo: 6
-                            minuteTo: 0
-                            _links:
-                              self:
-                                href: /Api/Shift/3581
-                          - id: 3582
-                            hourFrom: 6
-                            minuteFrom: 0
-                            hourTo: 14
-                            minuteTo: 0
-                            _links:
-                              self:
-                                href: /Api/Shift/3582
-                          - id: 3583
-                            hourFrom: 14
-                            minuteFrom: 0
-                            hourTo: 21
-                            minuteTo: 0
-                            _links:
-                              self:
-                                href: /Api/Shift/3583
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /MeasurementAddCommands:
-    post:
-      operationId: addMeasurement
-      tags: [Measurement Configuration]
-      summary: Create measurement
-      description: |
-        Creates a new measurement over a data input of a device. The operation is an asynchronous command (`202 Accepted` + `location` of the command result).
-
-        The `DeviceId` and `InputId` identify the hardware input the measurement will collect the data from - the identifiers are provided by Plantyst when the device is provisioned (contact the support when in doubt). The measurement is placed under the given hierarchical location, or directly under the root of the customer account when `HierarchicalLocationId` is omitted.
-
-        Required rights: administrator access to the device within the current customer account of the user.
-      parameters:
-        - $ref: "#/components/parameters/CommandCustomId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [BaseTitle, TimeZoneId, MeasurementType, DeviceId, InputId]
-              properties:
-                BaseTitle:
-                  type: string
-                  description: The base title of the measurement (without the location/machine-number prefixes).
-                TimeZoneId:
-                  type: string
-                  description: The Windows time zone identifier of the measurement (e.g. `Central Europe Standard Time`); must be convertible to an IANA code.
-                MeasurementType:
-                  type: integer
-                  enum: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-                  description: "The type of the measured quantity: `1` Speed (continuous production), `2` Rate (number of pieces), `3` ProductCycle (production cycle count), `4` RunTime, `5` Temperature, `6` Humidity, `7` Power, `8` Flow, `9` Workload, `10` Rotation."
-                DeviceId:
-                  type: integer
-                InputId:
-                  type: integer
-                  description: The input number of the device the measurement collects the data from.
-                PrefixLabel:
-                  type: [string, "null"]
-                  description: An optional prefix (machine number) displayed before the measurement title.
-                HierarchicalLocationId:
-                  type: [integer, "null"]
-                  description: The hierarchical location (group) the measurement is placed under; the root of the customer account when omitted. Must belong to the customer account of the user.
-                ShiftEndDowntimeAction:
-                  type: [integer, "null"]
-                  enum: [0, 1]
-                  description: "What happens to a downtime running at the end of a shift: `0` Continue (default), `1` Terminate."
-            example:
-              BaseTitle: Packing line 1
-              TimeZoneId: Central Europe Standard Time
-              MeasurementType: 2
-              DeviceId: 123
-              InputId: 3
-              PrefixLabel: "L1"
-              HierarchicalLocationId: 618
-      responses:
-        "202":
-          $ref: "#/components/responses/CommandAccepted"
-        "400":
-          description: The title, prefix, measurement type or time zone is invalid, or the hierarchical location does not belong to the customer account of the user.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          description: The user does not have administrator access to the device.
-
-  /MeasurementUpdateCommands:
-    post:
-      operationId: updateMeasurement
-      tags: [Measurement Configuration]
-      summary: Update measurement
-      description: |
-        Updates the configuration of the measurement. Only the properties present in the payload are changed (merge semantics); sending a payload with no actual change fails with `400 Bad Request`.
-
-        `OriginGuid` must be the current `commandGuid` of the measurement (see Measurements) - a stale value fails synchronously with `409 Conflict`; re-read the measurement before a change.
-
-        `HierarchicalLocationId` present with a `null` value moves the measurement back under the root of the customer account; a new location must belong to the same customer account.
-
-        Required access right: _Admin_.
-      parameters:
-        - $ref: "#/components/parameters/CommandCustomId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [MeasurementId, OriginGuid]
-              properties:
-                MeasurementId:
-                  type: integer
-                OriginGuid:
-                  type: string
-                  format: uuid
-                  description: The current `commandGuid` of the measurement.
-                BaseTitle:
-                  type: string
-                  description: The base title of the measurement (see also the rename command).
-                PrefixLabel:
-                  type: [string, "null"]
-                  description: The prefix (machine number) displayed before the measurement title.
-                HierarchicalLocationId:
-                  type: [integer, "null"]
-                  description: The hierarchical location (group) of the measurement; `null` moves it under the root of the customer account.
-                ShiftEndDowntimeAction:
-                  type: [integer, "null"]
-                  enum: [0, 1]
-                  description: "What happens to a downtime running at the end of a shift: `0` Continue, `1` Terminate."
-              # Internal-only payload properties, intentionally not documented
-              # (they require internal Plantyst roles):
-              # * MeasurementType - changing to a type with a different quantity
-              #   type requires the CustomerCare role (403 otherwise); a change
-              #   within the same quantity type counts as "no change" (400)
-              # * TimeZoneId - changing the time zone requires the Administrator
-              #   role (403 otherwise); validated as a Windows time zone id
-              #   convertible to an IANA code
-            example:
-              MeasurementId: 3
-              OriginGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
-              PrefixLabel: "L1"
-              HierarchicalLocationId: 620
-      responses:
-        "202":
-          $ref: "#/components/responses/CommandAccepted"
-        "400":
-          description: The payload contains no actual change, a title is invalid, or the hierarchical location does not belong to the same customer account.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "409":
-          description: The `OriginGuid` does not equal the current `commandGuid` of the measurement.
-
-  /MeasurementsRenameCommands:
-    post:
-      operationId: renameMeasurement
-      tags: [Measurement Configuration]
-      summary: Rename measurement
-      description: |
-        Renames the measurement (sets its `baseTitle`). A shortcut for the common rename case - the same result can be achieved with the update command.
-
-        `OriginGuid` must be the current `commandGuid` of the measurement; a command with a stale value finishes with the `Conflict` result.
-
-        Required access right: _Admin_.
-      parameters:
-        - $ref: "#/components/parameters/CommandCustomId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [MeasurementId, BaseTitle, OriginGuid]
-              properties:
-                MeasurementId:
-                  type: integer
-                BaseTitle:
-                  type: string
-                  description: The new base title of the measurement.
-                OriginGuid:
-                  type: string
-                  format: uuid
-                  description: The current `commandGuid` of the measurement.
-            example:
-              MeasurementId: 3
-              BaseTitle: Packing line 1 - east
-              OriginGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
-      responses:
-        "202":
-          $ref: "#/components/responses/CommandAccepted"
-        "400":
-          description: The title is invalid.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /MeasurementsArchiveCommands:
-    post:
-      operationId: archiveMeasurement
-      tags: [Measurement Configuration]
-      summary: Archive measurement
-      description: |
-        Archives the measurement (it stops collecting data and disappears from the active lists; the historical data stay accessible). An archived measurement appears with `archived: true` in `/Measurements?archived=true`.
-
-        The measurement must not have any assigned data source - unassign the data sources first (`/MeasurementDataSourceUnassignCommands`), otherwise the request fails with `403 Forbidden`.
-
-        `OriginGuid` must be the current `commandGuid` of the measurement.
-
-        Required access right: _Owner_.
-      parameters:
-        - $ref: "#/components/parameters/CommandCustomId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [MeasurementId, OriginGuid]
-              properties:
-                MeasurementId:
-                  type: integer
-                OriginGuid:
-                  type: string
-                  format: uuid
-                  description: The current `commandGuid` of the measurement.
-            example:
-              MeasurementId: 3
-              OriginGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
-      responses:
-        "202":
-          $ref: "#/components/responses/CommandAccepted"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          description: The user does not have the Owner right, or the measurement still has an assigned data source.
-
-  /DataSourceAddCommands:
-    post:
-      operationId: addDataSource
-      tags: [Measurement Configuration]
-      summary: Create data source
-      description: |
-        Creates a new data source (a device input) on the device, and optionally assigns it to a measurement right away.
-
-        * `Type` - only `DeviceInput` is currently supported.
-        * `Configuration` - a JSON document __serialized as a string__. It must contain the `InputId` (the input number to create on the device; must not exist yet), and may contain `DataSourceRequirements` - an array of `{ParameterName, Value}` adjustments (e.g. `SamplingPeriod`, `InputType`).
-
-        A violation of the configuration rules (unsupported type, invalid JSON, missing or duplicate `InputId`) finishes with the `DataError` command result.
-
-        Required rights: administrator access to the device within the current customer account; with `MeasurementId` also the _Owner_ right of the measurement.
-      parameters:
-        - $ref: "#/components/parameters/CommandCustomId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [DeviceId, Type, Configuration]
-              properties:
-                DeviceId:
-                  type: integer
-                Type:
-                  type: string
-                  enum: [DeviceInput]
-                Configuration:
-                  type: string
-                  description: The JSON configuration serialized as a string (see the description).
-                MeasurementId:
-                  type: [integer, "null"]
-                  description: When set, the created data source is immediately assigned to the measurement.
-            example:
-              DeviceId: 123
-              Type: DeviceInput
-              Configuration: '{"InputId": 3, "DataSourceRequirements": [{"ParameterName": "SamplingPeriod", "Value": 60}]}'
-              MeasurementId: 3
-      responses:
-        "202":
-          $ref: "#/components/responses/CommandAccepted"
-        "400":
-          description: The `Type` or `Configuration` is missing.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          description: The user does not have administrator access to the device, or the Owner right of the measurement.
-
-  /MeasurementDataSourceAssignCommands:
-    post:
-      operationId: assignMeasurementDataSource
-      tags: [Measurement Configuration]
-      summary: Assign data source
-      description: |
-        Assigns an existing data source (device input) to the measurement - the measurement starts collecting the data of the input.
-
-        The compatibility of the device board firmware with the measurement is checked first: an incompatible combination fails synchronously with `409 Conflict`, unless `IgnoreFilterIncompatibility: true` is set.
-
-        Required rights: the _Owner_ right of the measurement (within the current customer account) and administrator access to the device of the data source.
-      parameters:
-        - $ref: "#/components/parameters/CommandCustomId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [MeasurementId, DataSourceId]
-              properties:
-                MeasurementId:
-                  type: integer
-                DataSourceId:
-                  type: integer
-                  description: The identifier of the data source (device input).
-                IgnoreFilterIncompatibility:
-                  type: boolean
-                  description: Skip the board firmware compatibility check.
-            example:
-              MeasurementId: 3
-              DataSourceId: 456
-      responses:
-        "202":
-          $ref: "#/components/responses/CommandAccepted"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          description: The user does not have the Owner right of the measurement or administrator access to the device.
-        "409":
-          description: The device board firmware is not compatible with the measurement (use `IgnoreFilterIncompatibility` to skip the check).
-
-  /MeasurementDataSourceUnassignCommands:
-    post:
-      operationId: unassignMeasurementDataSource
-      tags: [Measurement Configuration]
-      summary: Unassign data source
-      description: |
-        Removes the assignment of the data source (device input) to the measurement - the measurement stops collecting the data of the input. Unassigning all data sources is also the precondition of archiving a measurement.
-
-        Required rights: the _Owner_ right of the measurement and administrator access to the device of the data source; the data source must currently be assigned to the measurement.
-      parameters:
-        - $ref: "#/components/parameters/CommandCustomId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [MeasurementId, DataSourceId]
-              properties:
-                MeasurementId:
-                  type: integer
-                DataSourceId:
-                  type: integer
-                  description: The identifier of the data source (device input).
-            example:
-              MeasurementId: 3
-              DataSourceId: 456
-      responses:
-        "202":
-          $ref: "#/components/responses/CommandAccepted"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          description: The user does not have the Owner right of the measurement, the data source is not assigned to it, or the user does not have administrator access to the device.
-
-  # Internal-only endpoints, intentionally not documented (they are bound to
-  # internal Plantyst roles - the CustomerCare role must not be mentioned in
-  # the public documentation):
-  # * POST Api/MeasurementReaggregationCommands - recompute the aggregations of
-  #   a measurement ({MeasurementId, FromDate?, TimeSeriesNames?}; requires the
-  #   Admin right AND the CustomerCare role)
-  # * POST Api/MeasurementDetailReportGenerateCommands - generate the PDF detail
-  #   report ({RequestTime with offset = the time zone of the rendering,
-  #   Queries: [{MeasurementId, From, To, View - e.g. "Base.MinuteSet"}]};
-  #   View right; the controller WAITS for the rendering, so the 202 arrives
-  #   after ~10 s and the command result is already Success with an extra
-  #   `downloadUrl` field ("/Report/{date}-{guid}.pdf?ticks=..."); the download
-  #   is an MVC route accepting only the Portal cookie session - an API key or
-  #   a bearer token gets the login page, which makes it of little use to pure
-  #   API clients; verified live 2026-07-12)
-
-  # ---------------------------------------------------------------------------
-  # Job Types
+  # Job Plan (endpoints historically named JobTypes)
   # ---------------------------------------------------------------------------
   /JobTypes:
     get:
       operationId: getJobTypes
-      tags: [Job Types]
-      summary: Get job types
+      tags: [Job Plan]
+      summary: List planned jobs
       description: |
-        Gets the list of job types (the job plan) of the user's current subscription.
+        Gets the job plan (the list of planned jobs) of the user's current subscription.
 
         Required access right: _View_.
       parameters:
@@ -3263,10 +3376,10 @@ paths:
           required: false
           schema:
             type: integer
-          description: When specified, only job types of the given measurement are returned.
+          description: When specified, only the planned jobs of the given measurement are returned.
       responses:
         "200":
-          description: The list of job types.
+          description: The job plan (the list of planned jobs).
           content:
             application/hal+json:
               schema:
@@ -3321,10 +3434,10 @@ paths:
   /JobTypes/{id}:
     get:
       operationId: getJobType
-      tags: [Job Types]
-      summary: Get job type
+      tags: [Job Plan]
+      summary: Get planned job
       description: |
-        Gets the job type with the specific identifier.
+        Gets the planned job with the specific identifier.
 
         Required access right: _View_.
       parameters:
@@ -3333,10 +3446,10 @@ paths:
           required: true
           schema:
             type: integer
-          description: The job type identifier.
+          description: The planned job identifier.
       responses:
         "200":
-          description: The job type.
+          description: The planned job.
           content:
             application/hal+json:
               schema:
@@ -3365,12 +3478,12 @@ paths:
   /JobTypesImportCommands:
     post:
       operationId: importJobTypes
-      tags: [Job Types]
-      summary: Upload CSV file with JOBs
+      tags: [Job Plan]
+      summary: Upload the job plan (CSV)
       description: |
         Uploads the CSV file with the job plan (see the group description for the file format). Exactly one file is expected as a multipart content.
 
-        __The import replaces the whole job type list__ of every measurement affected by the file.
+        __The import replaces the whole job plan__ of every measurement affected by the file.
 
         Required access right: _DataAdmin_ (for all affected measurements; insufficient rights on any of them cause the `DataError` command result).
 
@@ -3389,7 +3502,7 @@ paths:
                 jobTypesFile:
                   type: string
                   contentMediaType: text/csv
-                  description: The CSV file with JOBs (UTF-8, comma or semicolon separated, with a header row).
+                  description: The CSV file with the job plan (UTF-8, comma or semicolon separated, with a header row).
       responses:
         "202":
           $ref: "#/components/responses/CommandAccepted"
@@ -3874,7 +3987,7 @@ paths:
       tags: [Users & Subscriptions]
       summary: Get current subscription
       description: |
-        Gets the current subscription of the user - the customer account whose data the collection endpoints (measurements, job types, users) return.
+        Gets the current subscription of the user - the customer account whose data the collection endpoints (measurements, the job plan, users) return.
       responses:
         "200":
           description: The current subscription.
@@ -3937,163 +4050,6 @@ paths:
                           href: /Api/Subscriptions/83
         "401":
           $ref: "#/components/responses/Unauthorized"
-
-  # ---------------------------------------------------------------------------
-  # Metrics & OEE
-  # ---------------------------------------------------------------------------
-  /MeasurementMetricsQuery:
-    post:
-      operationId: queryMeasurementMetrics
-      tags: [Metrics & OEE]
-      summary: Query basic metrics
-      description: |
-        Computes the basic metrics of the given measurements and time ranges:
-
-        * `Production` - the amount produced in the range, in the units of the measured quantity
-        * `Uptime` - the share of the range the machine was running, in percent
-
-        Required access right: _View_ (for all queried measurements, otherwise `403 Forbidden`).
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/MetricsQueryPayload"
-            example:
-              Queries:
-                - MeasurementId: 3
-                  From: "2026-07-08T00:00:00Z"
-                  To: "2026-07-09T00:00:00Z"
-                  MaximumCount: 100
-      responses:
-        "200":
-          description: The metrics, one result per query.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MetricsQueryResult"
-              example:
-                results:
-                  - query:
-                      measurementId: 3
-                      from: "2026-07-08T00:00:00Z"
-                      to: "2026-07-09T00:00:00Z"
-                      maximumCount: 100
-                    results:
-                      - name: Production
-                        value: 674078.0
-                      - name: Uptime
-                        value: 65.486
-        "400":
-          description: The payload is invalid.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  /MeasurementMetricsQuery2:
-    post:
-      operationId: queryOeeMetricsSet
-      tags: [Metrics & OEE]
-      summary: Query OEE metric set (Beta)
-      description: |
-        Computes the OEE and fulfillment metric set of the given measurements and time ranges. The terminology follows the KPI guide in the Plantyst support center - see [Klíčové ukazatele výkonnosti měřené veličiny](https://support.plantyst.com/hc/cs/articles/17673220154908) (currently available in Czech only).
-
-        The returned metrics and their relations:
-
-        * `PlannedTime` - the __planned production time__, in seconds: the shift time from the measurement calendar (see Calendar) reduced by the planned downtimes (downtime codes flagged with _Planned time reduction_, including breaks).
-        * `RunTime` - the __real production time__, in seconds: the machine run time from the collected signal, cleared of all non-production times (including those too short to be reported as downtimes) and reduced by the downtimes flagged with _Production time reduction_.
-        * `Availability` (dostupnost) = `RunTime` / `PlannedTime`, a 0-1 ratio.
-        * `Production` - the __real production__: the measured amount including the production coefficient, adjusted by the production entries (corrections are added; when both OK and NOK pieces are recorded, `Production` = `ok` + `nok`).
-        * `ProductionCapacity` - the __planned production__: the production expected for the real production time at the `Setpoint` rate (units per minute) of the running jobs; for jobs without a setpoint their real production is used.
-        * `Performance` (výkon) = `Production` / `ProductionCapacity`; meaningful when the jobs carry a `Setpoint`, and can exceed 1.
-        * `ok`, `nok` - the good and bad pieces from the production entries. When not recorded, they are derived from `Production` (`ok` = `Production` - `nok`; with no entries at all, `ok` = `Production` and `nok` = 0).
-        * `Quality` (kvalita) = `ok` / `Production`, a 0-1 ratio.
-        * `OEE` = `Availability` × `Performance` × `Quality`; in the product, `Performance` is capped at 1 (as the KPI guide recommends) and a `null` `Performance` or `Quality` counts as 1.
-        * `PlneniCapacity`, `Plneni` - the __fulfillment__ metrics (the property names are historical Czech terms for "fulfillment"): `PlneniCapacity` is the production expected for the whole planned production time at the fulfillment norm rate (the `NormaPlneni` custom field of the job, falling back to its `Setpoint`), and `Plneni` = `ok` / `PlneniCapacity` - the fulfillment of the plan.
-        * `LastCycleTime` - the duration of the last production cycle, in seconds per piece.
-
-        A metric `value` is `null` when it cannot be computed - typically all planned-time-based metrics (`Availability`, `Performance`, `OEE`, ...) when the queried range contains no planned production time (the measurement calendar is empty).
-
-        __Beta:__ the endpoint is a Beta version - the set of returned metrics and their names may still change.
-
-        Required access right: _View_ (for all queried measurements, otherwise `403 Forbidden`).
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/MetricsQueryPayload"
-            example:
-              Queries:
-                - MeasurementId: 3
-                  From: "2026-07-08T00:00:00Z"
-                  To: "2026-07-09T00:00:00Z"
-                  MaximumCount: 100
-      responses:
-        "200":
-          description: The metric sets, one result per query.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MetricsQueryResult"
-              example:
-                results:
-                  - query:
-                      measurementId: 3
-                      from: "2026-07-08T00:00:00Z"
-                      to: "2026-07-09T00:00:00Z"
-                      maximumCount: 100
-                    results:
-                      - name: RunTime
-                        value: 21540.0
-                      - name: PlannedTime
-                        value: 28800.0
-                      - name: Availability
-                        value: 0.748
-                      - name: Production
-                        value: 3222.0
-                      - name: ProductionCapacity
-                        value: 3949.0
-                      - name: Performance
-                        value: 0.816
-                      - name: nok
-                        value: 12.0
-                      - name: ok
-                        value: 3210.0
-                      - name: Quality
-                        value: 0.996
-                      - name: PlneniCapacity
-                        value: 4320.0
-                      - name: Plneni
-                        value: 0.743
-                      - name: OEE
-                        value: 0.608
-                      - name: LastCycleTime
-                        value: 0.153
-        "400":
-          description: The payload is invalid.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-
-  # Internal-only endpoints, intentionally not documented (in preparation, not
-  # yet public; the contract may still change):
-  # * POST Api/MeasurementMetricQuotasQuery - query of quarterly metric quotas
-  #   (Queries[{MeasurementId, From, To, MetricName}] -> results[{query, result:{totalQuota}}];
-  #   totalQuota is pro-rated to the queried range)
-  # * POST Api/MeasurementMetricQuotas - set a quarterly quota (Admin right;
-  #   {MeasurementId, From = quarter start in the measurement time zone, TimeSpan: "q",
-  #   MetricName, Value}; 201 with empty body for both create and update;
-  #   Value null zeroes the quota but does not remove the record)
-  # * POST Api/TargetObjectiveAddCommands / TargetObjectiveUpdateCommands /
-  #   TargetObjectiveArchiveCommands / TargetObjectiveDeleteCommands - management
-  #   of the KPI target objectives; Add: {Metric, Title, Scope: {Id}, Periods:
-  #   [{ValidFrom, Period, Rules: [{Criterion (Span), Color, Priority}]}]},
-  #   Update takes TargetObjectiveId + the same shape, Archive/Delete take
-  #   {TargetObjectiveId}; the feature is still heavily in progress - keep
-  #   internal until it stabilizes
 
   # ---------------------------------------------------------------------------
   # Command Results
@@ -4795,14 +4751,14 @@ components:
           description: "The displayed title, composed as `{prefixLabel} {baseTitle}` (just the base title when no prefix is set). When several measurements of the customer account end up with the same composed title, a ` (n)` suffix is appended to distinguish them (numbered in the order of `measurementId`)."
         baseTitle:
           type: string
-          description: The base title of the measurement - the value managed by the measurement lifecycle commands (see Measurement Configuration).
+          description: The base title of the measurement - the value managed by the measurement lifecycle commands of the Measurements group.
         prefixLabel:
           type: [string, "null"]
           description: An optional prefix (typically a machine number) displayed before the base title; managed by the measurement lifecycle commands.
         commandGuid:
           type: string
           format: uuid
-          description: The identifier of the command that created or last changed the measurement; expected as `OriginGuid` by the measurement update, rename and archive commands - re-read the measurement before a change.
+          description: The identifier of the command that created or last changed the measurement; expected as `OriginGuid` by the measurement update and archive commands - re-read the measurement before a change.
         description:
           type: string
         quantityType:
@@ -5223,11 +5179,11 @@ components:
 
     JobType:
       type: object
-      description: A job type - one job of the job plan imported through the CSV import. Properties with `null` values are omitted in HAL responses.
+      description: A planned job (a "job type" in the API contract) - one job of the job plan imported through the CSV import. Properties with `null` values are omitted in HAL responses.
       properties:
         jobTypeId:
           type: integer
-          description: The identifier of the job type. It is NOT stable across imports - every CSV import replaces the job list and assigns new identifiers. To correlate job types with an external system, use `WorkOrderNumber` or a `Custom.`-prefixed field instead.
+          description: The identifier of the planned job. It is NOT stable across imports - every CSV import replaces the job plan and assigns new identifiers. To correlate the planned jobs with an external system, use `WorkOrderNumber` or a `Custom.`-prefixed field instead.
         title:
           type: string
         setpoint:
@@ -5243,7 +5199,7 @@ components:
           format: date-time
         isPermanent:
           type: boolean
-          description: Permanent job types stay available in the job list.
+          description: Permanent planned jobs stay available in the job plan.
         currentState:
           type: string
           enum: [Available, Running, Paused, Finished]
@@ -5253,11 +5209,11 @@ components:
           type: [number, "null"]
         order:
           type: [integer, "null"]
-          description: The position of the job type in the job list (the order of rows in the imported file).
+          description: The position of the planned job in the job plan (the order of rows in the imported file).
         commandGuid:
           type: string
           format: uuid
-          description: The identifier of the import command that created the job type.
+          description: The identifier of the import command that created the planned job.
         description:
           type: [string, "null"]
         operations:
