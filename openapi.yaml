@@ -31,7 +31,7 @@ info:
 
     In HAL responses, a relation with a single link is serialized as an object, while a relation with multiple links is serialized as an array of link objects.
 
-    Property names in request payloads are matched case-insensitively (e.g. `text` and `Text` are equivalent); the documentation uses the PascalCase form for requests and the camelCase form for responses, matching the server's own serialization.
+    For the Portal JSON endpoints, property names in request payloads are matched case-insensitively (e.g. `text` and `Text` are equivalent); the documentation uses the PascalCase form for requests and the camelCase form for responses, matching the server's own serialization. Two groups differ: the OAuth requests follow the OAuth standard snake_case names (`grant_type`, `client_id`), and the SCIM endpoints follow the SCIM attribute names documented in their chapter.
 
     ## Synchronous and asynchronous operations
 
@@ -158,7 +158,7 @@ tags:
       ```
   - name: Measurements
     description: |
-      This section contains endpoints for the resources related to measurements and their basic properties. A measurement is a key data type to which the most of other API data has a relation. A measurement object has the following properties:
+      This section contains endpoints for the resources related to measurements and their basic properties. A measurement is a core resource to which most other API data relates. A measurement object has the following properties:
 
       * `measurementId` - unique identifier of the measurement
       * `title` - title of the measurement
@@ -300,7 +300,7 @@ tags:
 
       __Pauses__
 
-      The shift pauses are expressed as __offsets from the shift start__ in the .NET TimeSpan format `[dd.]hh:mm:ss` - e.g. a pause `{ "from": "04:00:00", "to": "04:15:00" }` of a shift starting at 06:00 UTC runs from 10:00 to 10:15 UTC.
+      The shift pauses are expressed as __offsets from the shift start__ in the .NET TimeSpan format `[dd.]hh:mm:ss` - e.g. a pause `{ "from": "04:00:00", "to": "04:15:00" }` of a shift starting at 06:00 UTC runs from 10:00 to 10:15 UTC. The responses use the camelCase form (`{"from": ..., "to": ...}`); the create and update requests use the PascalCase form (`{"From": ..., "To": ...}`).
 
       Reading the calendar requires the _View_ right; the management operations require the _DataAdmin_ right and follow the asynchronous command pattern (`202 Accepted` + `location`, see Command Results).
   - name: Tasks (Beta)
@@ -329,7 +329,9 @@ tags:
 
       __Directory__
 
-      The provisioning is bound to a __directory__ - the link between the customer's identity provider tenant and Plantyst. The directory (its `directoryId` in the URL) and a dedicated provisioning credential bound to it are set up on request at [support@plantyst.com](mailto:support@plantyst.com). The credential is a __JWT bearer token__ issued for the directory (the "secret token" pasted into the identity provider's provisioning configuration) - API keys cannot be used for SCIM. Plantyst configures the credential with the directory binding and the security roles required by the endpoints (`Plantyst/User/Read`, `Plantyst/User/Write`, `Plantyst/Group/Read`, `Plantyst/Group/Write`); a token without the roles is rejected with `401`, a token bound to a different directory with `403 Forbidden`.
+      The provisioning is bound to a __directory__ - the link between the customer's identity provider tenant and Plantyst. The directory (its `directoryId` in the URL) and the provisioning access are set up on request at [support@plantyst.com](mailto:support@plantyst.com).
+
+      The authentication uses the standard __OAuth2 bearer token (JWT)__ of the API - the same token kind as the rest of the API (see Authorization); __API keys are not supported for SCIM__. The token must be obtained through an application that Plantyst has bound to the directory and granted the provisioning security roles (`Plantyst/User/Read`, `Plantyst/User/Write`, `Plantyst/Group/Read`, `Plantyst/Group/Write`) - typically a dedicated application registration whose token is pasted as the "secret token" into the identity provider's provisioning configuration. A token without the roles is rejected with `401`; a token bound to a different directory with `403 Forbidden`.
 
       __Users and groups__
 
@@ -338,7 +340,9 @@ tags:
 
       __Plantyst SCIM extensions__
 
-      Both resource types carry Plantyst-specific properties defined in extension namespaces:
+      Both resource types carry Plantyst-specific attributes. They are defined by the extension URNs below, but __on the wire they are serialized as plain top-level properties of the resource__ - there is no nested extension object, and the names are case-sensitive. Note an asymmetry in the `schemas` attribute: the user resources list only the core URN, while the group resources list the core and the extension URN.
+
+      __This serialization deviates from RFC 7643__, which nests extension attributes in a complex attribute named by the extension URN (and requires the URN in `schemas`). Generic SCIM connectors or validators expecting the standard shape will not find these attributes - read and write them as plain top-level properties instead.
 
       * `urn:ietf:params:scim:schemas:extension:plantyst:1.0:User`
         * `Role` - the Plantyst role of the user (read-only)
@@ -512,7 +516,7 @@ paths:
       tags: [Measurements]
       summary: List Measurements
       description: |
-        Gets the list of measurements for which the current user has the access rights for view or higher.
+        Returns the measurements for which the current user has at least the _View_ right.
 
         Required access right: _View_.
 
@@ -791,6 +795,8 @@ paths:
         A shift is defined by the start and end hour and minute of the day; an overnight shift wraps midnight (e.g. `hourFrom: 22`, `hourTo: 6`). The optional `type` is the display label of the shift.
 
         The shift systems are read-only in the API - they are managed in the Portal settings.
+
+        The example below omits the built-in default shift system (`id` `0`) for brevity; it is always the first returned item.
 
         Required access right: _View_.
       parameters:
@@ -1078,7 +1084,7 @@ paths:
       tags: [Measurements]
       summary: Archive measurement
       description: |
-        Archives the measurement (it stops collecting data and disappears from the active lists; the historical data stay accessible). An archived measurement appears with `archived: true` in `/Measurements?archived=true`.
+        Archives the measurement: it stops collecting data and is no longer returned by `GET /Measurements` (its historical data stay stored). There is no API operation for un-archiving - contact the Plantyst support.
 
         The measurement must not have any assigned data source - unassign the data sources first (`/MeasurementDataSourceUnassignCommands`), otherwise the request fails with `403 Forbidden`.
 
@@ -1272,8 +1278,7 @@ paths:
         * `"Base.Day"` - set of day aggregations, each for one day in the measurement time zone
         * `"Base.Month"` - set of month aggregations, each for one month in the measurement time zone
 
-        The response for the request contains the copy of the original query, the set of data items and the recipe for the interpretation of the data items (`outputFormat`).
-        Each item in the output format defines interpretation of the respective data item.
+        For each query, the response contains a copy of the original query, the data items and the `outputFormat` that describes how to interpret them. The `data` array is flattened by sample: for each sample, its values appear in the order of the `outputFormat` array, followed by the values of the next sample.
         For five output format items and two data samples, there will be ten data items in the response. The array may contain the following values:
         * `ItemCount` - defines the count of the atomic data items in the aggregation
         * `TimeSquareSum` - auxiliary value for the optimized data computations
@@ -1693,7 +1698,7 @@ paths:
       tags: [Metadocuments]
       summary: Get Metadocument
       description: |
-        Gets the metadocument with the specific Guid, with embedded comments, production entries and related users.
+        Returns the metadocument with the specified GUID, including the embedded comments, production entries and related users.
 
         Required access right: _View_.
       responses:
@@ -1760,7 +1765,7 @@ paths:
       tags: [Metadocuments]
       summary: Patch Metadocument
       description: |
-        Updates the metadocument with the specific Guid. Only the properties present in the payload are changed.
+        Updates the metadocument with the specified GUID. Only the properties present in the payload are changed.
 
         Required access right: _Contributor_ (see the group description for `readOnly` and `locks` restrictions).
 
@@ -1793,7 +1798,7 @@ paths:
       tags: [Metadocuments]
       summary: Delete Metadocument
       description: |
-        Deletes the metadocument with the specific Guid.
+        Deletes the metadocument with the specified GUID.
 
         Required access right: _Contributor_ (see the group description for `readOnly` and `locks` restrictions).
       parameters:
@@ -2605,12 +2610,13 @@ paths:
           multipart/form-data:
             schema:
               type: object
+              required: [file]
               properties:
                 file:
                   type: string
                   contentMediaType: text/csv
                   description: |
-                    The CSV file with the NOK records (UTF-8, comma or semicolon separated, with a header row). Example:
+                    The CSV file with the NOK records (UTF-8, comma or semicolon separated, with a header row). Send exactly one file part; the form field name is not significant. Example:
 
                     ```
                     MeasurementId,WorkOrderNumber,TimeStamp,Value
@@ -2663,27 +2669,7 @@ paths:
           content:
             application/hal+json:
               schema:
-                type: object
-                properties:
-                  _links:
-                    $ref: "#/components/schemas/HalLinks"
-                  _embedded:
-                    type: object
-                    properties:
-                      taskEntry:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/TaskEntry"
-                      user:
-                        type: array
-                        items:
-                          type: object
-                          description: The users referenced by the tasks and their metadocuments.
-                      metadocument:
-                        type: array
-                        items:
-                          type: object
-                          description: The metadocuments the tasks belong to (see Metadocuments).
+                $ref: "#/components/schemas/TaskEntryList"
               example:
                 _links:
                   self:
@@ -2742,7 +2728,11 @@ paths:
             example: ["332011b2-f82f-4b05-afb5-a55cc6e71418"]
       responses:
         "200":
-          description: The tasks with the related users and metadocuments (the same shape as the task list).
+          description: The tasks with the related users and metadocuments, in the same HAL representation as `GET /TaskEntries`.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/TaskEntryList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3554,11 +3544,12 @@ paths:
           multipart/form-data:
             schema:
               type: object
+              required: [jobTypesFile]
               properties:
                 jobTypesFile:
                   type: string
                   contentMediaType: text/csv
-                  description: The CSV file with the job plan (UTF-8, comma or semicolon separated, with a header row).
+                  description: The CSV file with the job plan (UTF-8, comma or semicolon separated, with a header row). Send exactly one file part; the form field name is not significant.
       responses:
         "202":
           $ref: "#/components/responses/CommandAccepted"
@@ -4177,6 +4168,8 @@ paths:
       - $ref: "#/components/parameters/ScimDirectoryId"
     get:
       operationId: scimQueryUsers
+      security:
+        - oauth2: []
       tags: [SCIM Provisioning]
       summary: Query users (SCIM)
       description: |
@@ -4202,7 +4195,7 @@ paths:
           content:
             application/scim+json:
               schema:
-                $ref: "#/components/schemas/ScimListResponse"
+                $ref: "#/components/schemas/ScimUserListResponse"
               example:
                 schemas: ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
                 totalResults: 1
@@ -4223,6 +4216,8 @@ paths:
           description: The credential is not bound to the directory given in the URL.
     post:
       operationId: scimCreateUser
+      security:
+        - oauth2: []
       tags: [SCIM Provisioning]
       summary: Create user (SCIM)
       description: |
@@ -4271,6 +4266,8 @@ paths:
         description: The SCIM user identifier (equals the Plantyst `userId`).
     get:
       operationId: scimGetUser
+      security:
+        - oauth2: []
       tags: [SCIM Provisioning]
       summary: Get user (SCIM)
       responses:
@@ -4288,6 +4285,8 @@ paths:
           description: The user does not exist in the directory.
     patch:
       operationId: scimPatchUser
+      security:
+        - oauth2: []
       tags: [SCIM Provisioning]
       summary: Update user (SCIM PatchOp)
       description: |
@@ -4323,6 +4322,8 @@ paths:
           description: The user does not exist in the directory.
     delete:
       operationId: scimDeleteUser
+      security:
+        - oauth2: []
       tags: [SCIM Provisioning]
       summary: Deactivate user (SCIM)
       description: Deactivates the user. The Plantyst account is kept for historical references (`creatorId`, comment authors, ...), but can no longer sign in and is no longer returned by the SCIM endpoints (`404`).
@@ -4341,6 +4342,8 @@ paths:
       - $ref: "#/components/parameters/ScimDirectoryId"
     get:
       operationId: scimQueryGroups
+      security:
+        - oauth2: []
       tags: [SCIM Provisioning]
       summary: Query groups (SCIM)
       description: |
@@ -4366,7 +4369,7 @@ paths:
           content:
             application/scim+json:
               schema:
-                $ref: "#/components/schemas/ScimListResponse"
+                $ref: "#/components/schemas/ScimGroupListResponse"
         "400":
           description: The filter expression is invalid.
         "401":
@@ -4375,6 +4378,8 @@ paths:
           description: The credential is not bound to the directory given in the URL.
     post:
       operationId: scimCreateGroup
+      security:
+        - oauth2: []
       tags: [SCIM Provisioning]
       summary: Create group (SCIM)
       description: |
@@ -4421,6 +4426,8 @@ paths:
         description: The SCIM group identifier (equals the group identifier used elsewhere in the API, e.g. `groupId` of `/Measurements`).
     get:
       operationId: scimGetGroup
+      security:
+        - oauth2: []
       tags: [SCIM Provisioning]
       summary: Get group (SCIM)
       parameters:
@@ -4453,6 +4460,8 @@ paths:
           description: The group does not exist - or the lookup of an existing group failed on a missing group-directory link (a known server-side issue affecting individual group retrieval and updates; the query, create and delete endpoints are not affected). Use the query endpoint with a `displayName` filter as a workaround.
     patch:
       operationId: scimPatchGroup
+      security:
+        - oauth2: []
       tags: [SCIM Provisioning]
       summary: Update group (SCIM PatchOp)
       description: |
@@ -4489,6 +4498,8 @@ paths:
           description: The group does not exist in the directory.
     delete:
       operationId: scimDeleteGroup
+      security:
+        - oauth2: []
       tags: [SCIM Provisioning]
       summary: Delete group (SCIM)
       description: Deletes the group. Only empty leaf groups can be deleted - a group with child groups or content, and the groups representing the subscription or the directory itself, are rejected.
@@ -4670,10 +4681,11 @@ components:
 
     CommandLocation:
       type: object
+      required: [location]
       properties:
         location:
           type: string
-          description: Specifies the relative URL with the result of the requested operation.
+          description: The relative URL of the command-result resource. Always present in a successful `202` response.
 
     HalLink:
       type: object
@@ -5056,8 +5068,9 @@ components:
     # * FromTimeAdjustment, ToTimeAdjustment - automatic time adjustment rules
     # * MetadocumentType - obsolete alias of Type
     # * DowntimeCode - writable alias of DowntimeCodeKey (both map to the same entity field);
-    #   only DowntimeCodeKey is documented, DowntimeCode should eventually become a read-only
-    #   property resolved from the downtime code dictionary (see DOPORUCENI-API.md A12)
+    #   only DowntimeCodeKey is documented; the intended target state is that DowntimeCode
+    #   becomes a read-only property resolved from the downtime code dictionary
+    #   (improvement tracked in DOPORUCENI-API.md)
     MetadocumentCreate:
       type: object
       required: [MeasurementId, Type, From]
@@ -5706,7 +5719,7 @@ components:
           type: array
           items:
             type: string
-          description: Always `["urn:ietf:params:scim:schemas:core:2.0:User"]`.
+          description: "Always `[\"urn:ietf:params:scim:schemas:core:2.0:User\"]` - the extension URN is not listed even though the extension properties are present."
         id:
           type: string
           description: The SCIM identifier; equals the Plantyst `userId`. Assigned by the server.
@@ -5781,8 +5794,9 @@ components:
         meta:
           $ref: "#/components/schemas/ScimMeta"
 
-    ScimListResponse:
+    ScimUserListResponse:
       type: object
+      description: "A SCIM `ListResponse` with user resources. Note the PascalCase `Resources` key (per RFC 7644) next to the camelCase counters."
       properties:
         schemas:
           type: array
@@ -5798,9 +5812,27 @@ components:
         Resources:
           type: array
           items:
-            oneOf:
-              - $ref: "#/components/schemas/ScimUser"
-              - $ref: "#/components/schemas/ScimGroup"
+            $ref: "#/components/schemas/ScimUser"
+
+    ScimGroupListResponse:
+      type: object
+      description: "A SCIM `ListResponse` with group resources. Note the PascalCase `Resources` key (per RFC 7644) next to the camelCase counters."
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          description: Always `["urn:ietf:params:scim:api:messages:2.0:ListResponse"]`.
+        totalResults:
+          type: integer
+        itemsPerPage:
+          type: integer
+        startIndex:
+          type: integer
+        Resources:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScimGroup"
 
     ScimPatchOp:
       type: object
@@ -5898,6 +5930,30 @@ components:
           description: "The HTML color of the tag (e.g. `#3498DB`)."
         _links:
           $ref: "#/components/schemas/HalLinks"
+
+    TaskEntryList:
+      type: object
+      description: The HAL list of tasks with the related users and metadocuments.
+      properties:
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+        _embedded:
+          type: object
+          properties:
+            taskEntry:
+              type: array
+              items:
+                $ref: "#/components/schemas/TaskEntry"
+            user:
+              type: array
+              items:
+                type: object
+                description: The users referenced by the tasks and their metadocuments.
+            metadocument:
+              type: array
+              items:
+                type: object
+                description: The metadocuments the tasks belong to (see Metadocuments).
 
     TaskEntry:
       type: object
