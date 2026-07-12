@@ -2,6 +2,9 @@ openapi: 3.1.0
 info:
   title: Plantyst Portal
   version: "1.0.0"
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
   description: |
     Plantyst Portal API is a REST API designed to access data related to customer measurements like basic time series, metrics or annotations.
 
@@ -229,12 +232,14 @@ tags:
 
   - name: Measurement Configuration
     description: |
-      Configuration resources of the measurements:
+      Configuration and lifecycle resources of the measurements:
 
       * __Tags__ - colored labels assigned to the measurements, used for filtering and grouping in the Portal. A tag is shared within the customer account. The tag operations are synchronous (no command result polling).
       * __Shift systems__ - the shift schedules of a measurement (read-only in the API; managed in the Portal settings).
+      * __Measurement lifecycle__ - creating, updating, renaming and archiving the measurements. The update, rename and archive commands take the current `commandGuid` of the measurement as `OriginGuid` (see Measurements) - every change assigns a new value, so re-read the measurement before a change.
+      * __Data sources__ - the device inputs the measurements collect their data from: creating an input on a device and (un)assigning it to a measurement. The device and input identifiers are provided by Plantyst when the hardware is provisioned.
 
-      Reading requires the _View_ right of the measurement; managing the tags requires the _Admin_ right.
+      Reading requires the _View_ right of the measurement; managing the tags and updating or renaming a measurement requires the _Admin_ right; archiving a measurement and managing its data sources requires the _Owner_ right (plus administrator access to the device).
   - name: Webhooks
     description: |
       Plantyst can notify an integration about metadocument changes by calling a registered HTTP callback URL (a webhook). Webhooks are set up on request at [support@plantyst.com](mailto:support@plantyst.com) - provide the callback URL and agree on the optional `configuration` value echoed with every delivery. The webhook fires for every metadocument change on all measurements accessible to the integration user; there is currently no self-service management API.
@@ -507,7 +512,10 @@ paths:
                           href: /Api/HierarchicalLocations/51
                   measurement:
                     - measurementId: 3
-                      title: A | 01 | Machine 1
+                      title: 01 Machine 1
+                      baseTitle: Machine 1
+                      prefixLabel: "01"
+                      commandGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
                       description: Main production line
                       quantityType: speed
                       archived: false
@@ -528,7 +536,10 @@ paths:
                         hierarchicalLocation:
                           href: /Api/HierarchicalLocations/51
                     - measurementId: 4
-                      title: A | 02 | Machine 2
+                      title: 02 Machine 2
+                      baseTitle: Machine 2
+                      prefixLabel: "02"
+                      commandGuid: 71c05f3a-9d2e-4b1f-8a67-30de5cb0a914
                       description: Main production line
                       quantityType: rate
                       archived: false
@@ -2845,6 +2856,364 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /MeasurementAddCommands:
+    post:
+      operationId: addMeasurement
+      tags: [Measurement Configuration]
+      summary: Create measurement
+      description: |
+        Creates a new measurement over a data input of a device. The operation is an asynchronous command (`202 Accepted` + `location` of the command result).
+
+        The `DeviceId` and `InputId` identify the hardware input the measurement will collect the data from - the identifiers are provided by Plantyst when the device is provisioned (contact the support when in doubt). The measurement is placed under the given hierarchical location, or directly under the root of the customer account when `HierarchicalLocationId` is omitted.
+
+        Required rights: administrator access to the device within the current customer account of the user.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [BaseTitle, TimeZoneId, MeasurementType, DeviceId, InputId]
+              properties:
+                BaseTitle:
+                  type: string
+                  description: The base title of the measurement (without the location/machine-number prefixes).
+                TimeZoneId:
+                  type: string
+                  description: The Windows time zone identifier of the measurement (e.g. `Central Europe Standard Time`); must be convertible to an IANA code.
+                MeasurementType:
+                  type: integer
+                  enum: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+                  description: "The type of the measured quantity: `1` Speed (continuous production), `2` Rate (number of pieces), `3` ProductCycle (production cycle count), `4` RunTime, `5` Temperature, `6` Humidity, `7` Power, `8` Flow, `9` Workload, `10` Rotation."
+                DeviceId:
+                  type: integer
+                InputId:
+                  type: integer
+                  description: The input number of the device the measurement collects the data from.
+                PrefixLabel:
+                  type: [string, "null"]
+                  description: An optional prefix (machine number) displayed before the measurement title.
+                HierarchicalLocationId:
+                  type: [integer, "null"]
+                  description: The hierarchical location (group) the measurement is placed under; the root of the customer account when omitted. Must belong to the customer account of the user.
+                ShiftEndDowntimeAction:
+                  type: [integer, "null"]
+                  enum: [0, 1]
+                  description: "What happens to a downtime running at the end of a shift: `0` Continue (default), `1` Terminate."
+            example:
+              BaseTitle: Packing line 1
+              TimeZoneId: Central Europe Standard Time
+              MeasurementType: 2
+              DeviceId: 123
+              InputId: 3
+              PrefixLabel: "L1"
+              HierarchicalLocationId: 618
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The title, prefix, measurement type or time zone is invalid, or the hierarchical location does not belong to the customer account of the user.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user does not have administrator access to the device.
+
+  /MeasurementUpdateCommands:
+    post:
+      operationId: updateMeasurement
+      tags: [Measurement Configuration]
+      summary: Update measurement
+      description: |
+        Updates the configuration of the measurement. Only the properties present in the payload are changed (merge semantics); sending a payload with no actual change fails with `400 Bad Request`.
+
+        `OriginGuid` must be the current `commandGuid` of the measurement (see Measurements) - a stale value fails synchronously with `409 Conflict`; re-read the measurement before a change.
+
+        `HierarchicalLocationId` present with a `null` value moves the measurement back under the root of the customer account; a new location must belong to the same customer account.
+
+        Required access right: _Admin_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementId, OriginGuid]
+              properties:
+                MeasurementId:
+                  type: integer
+                OriginGuid:
+                  type: string
+                  format: uuid
+                  description: The current `commandGuid` of the measurement.
+                BaseTitle:
+                  type: string
+                  description: The base title of the measurement (see also the rename command).
+                PrefixLabel:
+                  type: [string, "null"]
+                  description: The prefix (machine number) displayed before the measurement title.
+                HierarchicalLocationId:
+                  type: [integer, "null"]
+                  description: The hierarchical location (group) of the measurement; `null` moves it under the root of the customer account.
+                ShiftEndDowntimeAction:
+                  type: [integer, "null"]
+                  enum: [0, 1]
+                  description: "What happens to a downtime running at the end of a shift: `0` Continue, `1` Terminate."
+              # Internal-only payload properties, intentionally not documented
+              # (they require internal Plantyst roles):
+              # * MeasurementType - changing to a type with a different quantity
+              #   type requires the CustomerCare role (403 otherwise); a change
+              #   within the same quantity type counts as "no change" (400)
+              # * TimeZoneId - changing the time zone requires the Administrator
+              #   role (403 otherwise); validated as a Windows time zone id
+              #   convertible to an IANA code
+            example:
+              MeasurementId: 3
+              OriginGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
+              PrefixLabel: "L1"
+              HierarchicalLocationId: 620
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The payload contains no actual change, a title is invalid, or the hierarchical location does not belong to the same customer account.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The `OriginGuid` does not equal the current `commandGuid` of the measurement.
+
+  /MeasurementsRenameCommands:
+    post:
+      operationId: renameMeasurement
+      tags: [Measurement Configuration]
+      summary: Rename measurement
+      description: |
+        Renames the measurement (sets its `baseTitle`). A shortcut for the common rename case - the same result can be achieved with the update command.
+
+        `OriginGuid` must be the current `commandGuid` of the measurement; a command with a stale value finishes with the `Conflict` result.
+
+        Required access right: _Admin_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementId, BaseTitle, OriginGuid]
+              properties:
+                MeasurementId:
+                  type: integer
+                BaseTitle:
+                  type: string
+                  description: The new base title of the measurement.
+                OriginGuid:
+                  type: string
+                  format: uuid
+                  description: The current `commandGuid` of the measurement.
+            example:
+              MeasurementId: 3
+              BaseTitle: Packing line 1 - east
+              OriginGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The title is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /MeasurementsArchiveCommands:
+    post:
+      operationId: archiveMeasurement
+      tags: [Measurement Configuration]
+      summary: Archive measurement
+      description: |
+        Archives the measurement (it stops collecting data and disappears from the active lists; the historical data stay accessible). An archived measurement appears with `archived: true` in `/Measurements?archived=true`.
+
+        The measurement must not have any assigned data source - unassign the data sources first (`/MeasurementDataSourceUnassignCommands`), otherwise the request fails with `403 Forbidden`.
+
+        `OriginGuid` must be the current `commandGuid` of the measurement.
+
+        Required access right: _Owner_.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementId, OriginGuid]
+              properties:
+                MeasurementId:
+                  type: integer
+                OriginGuid:
+                  type: string
+                  format: uuid
+                  description: The current `commandGuid` of the measurement.
+            example:
+              MeasurementId: 3
+              OriginGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user does not have the Owner right, or the measurement still has an assigned data source.
+
+  /DataSourceAddCommands:
+    post:
+      operationId: addDataSource
+      tags: [Measurement Configuration]
+      summary: Create data source
+      description: |
+        Creates a new data source (a device input) on the device, and optionally assigns it to a measurement right away.
+
+        * `Type` - only `DeviceInput` is currently supported.
+        * `Configuration` - a JSON document __serialized as a string__. It must contain the `InputId` (the input number to create on the device; must not exist yet), and may contain `DataSourceRequirements` - an array of `{ParameterName, Value}` adjustments (e.g. `SamplingPeriod`, `InputType`).
+
+        A violation of the configuration rules (unsupported type, invalid JSON, missing or duplicate `InputId`) finishes with the `DataError` command result.
+
+        Required rights: administrator access to the device within the current customer account; with `MeasurementId` also the _Owner_ right of the measurement.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [DeviceId, Type, Configuration]
+              properties:
+                DeviceId:
+                  type: integer
+                Type:
+                  type: string
+                  enum: [DeviceInput]
+                Configuration:
+                  type: string
+                  description: The JSON configuration serialized as a string (see the description).
+                MeasurementId:
+                  type: [integer, "null"]
+                  description: When set, the created data source is immediately assigned to the measurement.
+            example:
+              DeviceId: 123
+              Type: DeviceInput
+              Configuration: '{"InputId": 3, "DataSourceRequirements": [{"ParameterName": "SamplingPeriod", "Value": 60}]}'
+              MeasurementId: 3
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The `Type` or `Configuration` is missing.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user does not have administrator access to the device, or the Owner right of the measurement.
+
+  /MeasurementDataSourceAssignCommands:
+    post:
+      operationId: assignMeasurementDataSource
+      tags: [Measurement Configuration]
+      summary: Assign data source
+      description: |
+        Assigns an existing data source (device input) to the measurement - the measurement starts collecting the data of the input.
+
+        The compatibility of the device board firmware with the measurement is checked first: an incompatible combination fails synchronously with `409 Conflict`, unless `IgnoreFilterIncompatibility: true` is set.
+
+        Required rights: the _Owner_ right of the measurement (within the current customer account) and administrator access to the device of the data source.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementId, DataSourceId]
+              properties:
+                MeasurementId:
+                  type: integer
+                DataSourceId:
+                  type: integer
+                  description: The identifier of the data source (device input).
+                IgnoreFilterIncompatibility:
+                  type: boolean
+                  description: Skip the board firmware compatibility check.
+            example:
+              MeasurementId: 3
+              DataSourceId: 456
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user does not have the Owner right of the measurement or administrator access to the device.
+        "409":
+          description: The device board firmware is not compatible with the measurement (use `IgnoreFilterIncompatibility` to skip the check).
+
+  /MeasurementDataSourceUnassignCommands:
+    post:
+      operationId: unassignMeasurementDataSource
+      tags: [Measurement Configuration]
+      summary: Unassign data source
+      description: |
+        Removes the assignment of the data source (device input) to the measurement - the measurement stops collecting the data of the input. Unassigning all data sources is also the precondition of archiving a measurement.
+
+        Required rights: the _Owner_ right of the measurement and administrator access to the device of the data source; the data source must currently be assigned to the measurement.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementId, DataSourceId]
+              properties:
+                MeasurementId:
+                  type: integer
+                DataSourceId:
+                  type: integer
+                  description: The identifier of the data source (device input).
+            example:
+              MeasurementId: 3
+              DataSourceId: 456
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user does not have the Owner right of the measurement, the data source is not assigned to it, or the user does not have administrator access to the device.
+
+  # Internal-only endpoints, intentionally not documented (they are bound to
+  # internal Plantyst roles - the CustomerCare role must not be mentioned in
+  # the public documentation):
+  # * POST Api/MeasurementReaggregationCommands - recompute the aggregations of
+  #   a measurement ({MeasurementId, FromDate?, TimeSeriesNames?}; requires the
+  #   Admin right AND the CustomerCare role)
+  # * POST Api/MeasurementDetailReportGenerateCommands - generate the PDF detail
+  #   report ({RequestTime with offset = the time zone of the rendering,
+  #   Queries: [{MeasurementId, From, To, View - e.g. "Base.MinuteSet"}]};
+  #   View right; the controller WAITS for the rendering, so the 202 arrives
+  #   after ~10 s and the command result is already Success with an extra
+  #   `downloadUrl` field ("/Report/{date}-{guid}.pdf?ticks=..."); the download
+  #   is an MVC route accepting only the Portal cookie session - an API key or
+  #   a bearer token gets the login page, which makes it of little use to pure
+  #   API clients; verified live 2026-07-12)
+
   # ---------------------------------------------------------------------------
   # Job Types
   # ---------------------------------------------------------------------------
@@ -4383,10 +4752,7 @@ components:
     # Internal-only measurement properties, intentionally not documented
     # (returned by the API, but intended for the Portal frontend; third
     # parties should ignore them):
-    # * baseTitle - title of the measurement without the location/machine-number prefixes
     # * shiftEndDowntimeAction - what happens to a downtime running at the end of a shift (Continue/Terminate/Split)
-    # * commandGuid - the identifier of the command that created or last updated the measurement
-    # * prefixLabel - user-defined prefix (machine number) displayed before the measurement title
     # * isHierarchicalLocationHiddenInTitle - whether the hierarchical location prefix is hidden in the title
     Measurement:
       type: object
@@ -4395,6 +4761,17 @@ components:
           type: integer
         title:
           type: string
+          description: "The displayed title, composed as `{prefixLabel} {baseTitle}` (just the base title when no prefix is set). When several measurements of the customer account end up with the same composed title, a ` (n)` suffix is appended to distinguish them (numbered in the order of `measurementId`)."
+        baseTitle:
+          type: string
+          description: The base title of the measurement - the value managed by the measurement lifecycle commands (see Measurement Configuration).
+        prefixLabel:
+          type: [string, "null"]
+          description: An optional prefix (typically a machine number) displayed before the base title; managed by the measurement lifecycle commands.
+        commandGuid:
+          type: string
+          format: uuid
+          description: The identifier of the command that created or last changed the measurement; expected as `OriginGuid` by the measurement update, rename and archive commands - re-read the measurement before a change.
         description:
           type: string
         quantityType:
