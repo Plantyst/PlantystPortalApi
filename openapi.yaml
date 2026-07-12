@@ -112,6 +112,10 @@ tags:
 
       Every command operation accepts an optional `commandCustomId` query parameter - a client-supplied identifier of the command. The command result can later be looked up with `GET /MetadocumentCommandResults?commandCustomId={id}` (useful when the response with the command location was lost).
 
+      __Change history__
+
+      Every processed metadocument command is recorded in an audit log that can be read with `POST /MetadocumentHistoryLogsQuery` - including the exact changes expressed as a JSON Patch document.
+
       __Access rights__
 
       Reading metadocuments requires the _View_ right; creating, updating and deleting requires the _Contributor_ right. Metadocuments marked `readOnly` and properties locked by another user (`locks`) cannot be modified; users with the _Admin_ right bypass the locks. Comments can be updated only by their author; deleting another user's comment requires the _Admin_ right.
@@ -212,6 +216,14 @@ tags:
 
       __Note:__ The API currently has no endpoint for listing the configured generation rules. The `OriginGuids` value can be tracked by the integration itself: the guid of the add or update command (the last segment of the returned `location` URL) becomes the `commandGuid` of the rule. The `ProductionAlarmTriggerIds` are however not exposed by the API at all - they are available only in the Portal settings (Settings - Downtimes - Automatic downtimes generating). A command with a stale `OriginGuids` value finishes with the `Conflict` result.
 
+  - name: Measurement Configuration
+    description: |
+      Configuration resources of the measurements:
+
+      * __Tags__ - colored labels assigned to the measurements, used for filtering and grouping in the Portal. A tag is shared within the customer account. The tag operations are synchronous (no command result polling).
+      * __Shift systems__ - the shift schedules of a measurement (read-only in the API; managed in the Portal settings).
+
+      Reading requires the _View_ right of the measurement; managing the tags requires the _Admin_ right.
   - name: Webhooks
     description: |
       Plantyst can notify an integration about metadocument changes by calling a registered HTTP callback URL (a webhook). Webhooks are set up on request at [support@plantyst.com](mailto:support@plantyst.com) - provide the callback URL and agree on the optional `configuration` value echoed with every delivery. The webhook fires for every metadocument change on all measurements accessible to the integration user; there is currently no self-service management API.
@@ -1353,6 +1365,401 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /MetadocumentHistoryLogsQuery:
+    post:
+      operationId: queryMetadocumentHistoryLogs
+      tags: [Metadocuments]
+      summary: Query metadocument change history
+      description: |
+        Returns the audit log of the metadocument changes of the given measurements - one record per processed metadocument command, with the applied changes expressed as a JSON Patch (RFC 6902) document. The time range of a query selects the records by the time the change was processed (`processedDate`).
+
+        Reading the `appliedChanges` patches:
+
+        * the property paths use the PascalCase names of the internal model (e.g. `/To`, `/Comments/0`) - the same convention as the `appliedChanges` of the webhook events (see Webhooks)
+        * a created metadocument appears as a `replace` of the root path `/` with the full document as the value
+        * a deleted metadocument appears as a `replace` of the root path `/` with a `null` value
+
+        Required access right: _View_ (for all queried measurements, otherwise `403 Forbidden`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Queries:
+                  type: array
+                  items:
+                    type: object
+                    required: [MeasurementId, From, To]
+                    properties:
+                      MeasurementId:
+                        type: integer
+                      From:
+                        type: string
+                        format: date-time
+                      To:
+                        type: string
+                        format: date-time
+            example:
+              Queries:
+                - MeasurementId: 3
+                  From: "2026-07-10T00:00:00Z"
+                  To: "2026-07-12T23:59:59Z"
+      responses:
+        "200":
+          description: The change history records, one result per query, ordered from the most recent change.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        query:
+                          type: object
+                          properties:
+                            measurementId:
+                              type: integer
+                            from:
+                              type: string
+                              format: date-time
+                            to:
+                              type: string
+                              format: date-time
+                        result:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              guid:
+                                type: string
+                                format: uuid
+                                description: The identifier of the processed command.
+                              metadocumentGuid:
+                                type: string
+                                format: uuid
+                                description: The identifier of the changed metadocument.
+                              appliedChanges:
+                                type: string
+                                description: The JSON Patch (RFC 6902) document with the applied changes, serialized as a string.
+                              originFrom:
+                                type: [string, "null"]
+                                format: date-time
+                                description: The `from` of the metadocument before the change, when the operation carried the range; `null` otherwise.
+                              originTo:
+                                type: [string, "null"]
+                                format: date-time
+                                description: The `to` of the metadocument before the change, when the operation carried the range; `null` otherwise.
+                              processedDate:
+                                type: string
+                                format: date-time
+                                description: The time the change was processed.
+                              eTag:
+                                type: string
+                                description: The `eTag` of the metadocument after the change.
+                              application:
+                                type: [string, "null"]
+                                description: The name of the client application that made the change; `null` when the change was made by a user in the Portal or with a plain API call.
+              example:
+                results:
+                  - query:
+                      measurementId: 3
+                      from: "2026-07-10T00:00:00Z"
+                      to: "2026-07-12T23:59:59Z"
+                    result:
+                      - guid: 2ba0b8f7-2593-4399-9cd4-02f8b5760811
+                        appliedChanges: '[{"op":"replace","path":"/To","value":"2026-07-10T17:00:00Z"}]'
+                        originFrom: "2026-07-10T16:00:00Z"
+                        originTo: "2026-07-10T16:30:00Z"
+                        processedDate: "2026-07-11T19:06:50.246Z"
+                        eTag: '"5e00d153-0000-0d00-0000-6a52944a0000"'
+                        application: null
+                        metadocumentGuid: b6b6fc8d-4733-48b3-a927-e0e97baedbc5
+                      - guid: a979f032-e75c-4a98-870a-3e3c7b0e3345
+                        appliedChanges: '[{"op":"add","path":"/Color","value":"46, 204, 113"}]'
+                        originFrom: null
+                        originTo: null
+                        processedDate: "2026-07-11T19:06:47.425Z"
+                        eTag: '"5e008e53-0000-0d00-0000-6a5294470000"'
+                        application: Downtime color
+                        metadocumentGuid: b6b6fc8d-4733-48b3-a927-e0e97baedbc5
+        "400":
+          description: The payload is invalid.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /MetadocumentAggregationsQuery:
+    post:
+      operationId: queryMetadocumentAggregations
+      tags: [Metadocuments]
+      summary: Query metadocument counts per interval
+      description: |
+        Returns the counts of the metadocuments per type in the given time intervals - e.g. "how many downtimes and jobs there were on each day of a week". Useful for overviews of long ranges without downloading the metadocuments themselves.
+
+        The interval splitting is driven by `AggregationIntervals` - a text pattern of `<number><unit>` pairs with the units `y` (years), `M` (months), `w` (weeks), `d` (days), `h` (hours) and `m` (minutes). The pattern repeats from `From` until `To` is reached: `1d` produces daily buckets, `8h16h` alternating 8-hour and 16-hour buckets. When omitted, the whole range is a single interval.
+
+        The `countPerType` of the result maps the metadocument type to the count in the interval; types with no match are omitted. At most 100 queries are accepted in one request.
+
+        Required access right: _View_ (for all queried measurements, otherwise `403 Forbidden`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Queries:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [MeasurementIds, From, To, RequestedTypes]
+                    properties:
+                      MeasurementIds:
+                        type: array
+                        items:
+                          type: integer
+                      From:
+                        type: string
+                        format: date-time
+                      To:
+                        type: string
+                        format: date-time
+                      AggregationIntervals:
+                        type: [string, "null"]
+                        description: "The interval pattern (see the description), e.g. `1d`; the whole range is one interval when omitted."
+                      RequestedTypes:
+                        type: array
+                        description: The metadocument types to count (see the tag description).
+                        items:
+                          type: integer
+                          enum: [0, 1, 2, 3]
+            example:
+              Queries:
+                - MeasurementIds: [3]
+                  From: "2026-07-09T00:00:00Z"
+                  To: "2026-07-12T00:00:00Z"
+                  AggregationIntervals: 1d
+                  RequestedTypes: [2, 3]
+      responses:
+        "200":
+          description: The counts per interval, in the order of the intervals.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+                  _embedded:
+                    type: object
+                    properties:
+                      metadocumentsAggregation:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            measurementId:
+                              type: integer
+                            from:
+                              type: string
+                              format: date-time
+                            to:
+                              type: string
+                              format: date-time
+                            countPerType:
+                              type: object
+                              description: The map of the metadocument type to the count of the metadocuments in the interval.
+                              additionalProperties:
+                                type: integer
+                            _links:
+                              $ref: "#/components/schemas/HalLinks"
+              example:
+                _links:
+                  self:
+                    href: /Api/MetadocumentAggregationsQuery/
+                _embedded:
+                  metadocumentsAggregation:
+                    - measurementId: 3
+                      from: "2026-07-09T00:00:00Z"
+                      to: "2026-07-10T00:00:00Z"
+                      countPerType:
+                        "2": 2
+                        "3": 11
+                      _links:
+                        self:
+                          href: /Api/MetadocumentAggregationsQuery/
+                    - measurementId: 3
+                      from: "2026-07-10T00:00:00Z"
+                      to: "2026-07-11T00:00:00Z"
+                      countPerType:
+                        "3": 10
+                      _links:
+                        self:
+                          href: /Api/MetadocumentAggregationsQuery/
+        "400":
+          description: The payload is invalid - more than 100 queries, an invalid `AggregationIntervals` definition, or missing `RequestedTypes`.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /MetadocumentSplitCommands:
+    post:
+      operationId: splitMetadocument
+      tags: [Metadocuments]
+      summary: Split metadocument
+      description: |
+        Splits a time-range metadocument into two at the given `SplitDate`: the original metadocument is truncated to end at `SplitDate`, and a new metadocument (with a new `guid`) is created covering the range from `SplitDate` to the original end. A typical use is splitting a downtime into two differently classified parts, or splitting a job at a shift boundary.
+
+        * `KeepContent: true` copies the document properties (title, downtime code, custom fields, ...) to the new metadocument; otherwise the new document is created empty.
+        * `KeepComments: true` copies the comments to the new metadocument.
+
+        The `SplitDate` must lie strictly inside the metadocument range (greater than `from`, lower than `to`), otherwise the request fails with `400 Bad Request`.
+
+        Required access right: _Contributor_ (the same rules as updating the metadocument).
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [Guid, SplitDate]
+              properties:
+                MeasurementId:
+                  type: integer
+                Guid:
+                  type: string
+                  format: uuid
+                  description: The identifier of the metadocument to split.
+                SplitDate:
+                  type: string
+                  format: date-time
+                  description: The time point to split the metadocument at; must lie strictly inside the metadocument range.
+                ETag:
+                  type: string
+                  description: The optional ETag for the optimistic concurrency check.
+                KeepContent:
+                  type: boolean
+                  description: Copy the document properties to the new metadocument.
+                KeepComments:
+                  type: boolean
+                  description: Copy the comments to the new metadocument.
+            example:
+              MeasurementId: 3
+              Guid: ee9c664a-3a3b-4183-92b0-77b12ee7b945
+              SplitDate: "2026-07-12T02:30:00Z"
+              KeepContent: true
+              KeepComments: true
+      responses:
+        "202":
+          $ref: "#/components/responses/MetadocumentCommandAccepted"
+        "400":
+          description: The `SplitDate` does not lie inside the metadocument range.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The metadocument does not exist.
+
+  # Internal-only endpoints, intentionally not documented (the multiple
+  # instances of jobs are for internal use for now):
+  # * POST Api/MetadocumentLinkAddCommands - create a job metadocument linked to
+  #   a multiple instance ({Metadocument: <same as POST /Metadocuments>, Link:
+  #   {LinkId, LinkType: MultipleInstance|ProductionEntries|Changeover,
+  #   Configuration?}}; 202 HAL {location, _links.metadocumentLink + _links.
+  #   metadocument} = three command results)
+  # * POST Api/MetadocumentCompleteCommands - complete a running instance
+  #   ({MetadocumentGuid, CompletedDate, OriginGuid = the current commandGuid of
+  #   the instance, ETag?}; sets the metadocument `to` and marks the instance
+  #   completed; 400 when the link/instance is missing, already completed, or
+  #   the OriginGuid is stale)
+  # * POST Api/MultipleInstances - query the instance states (body = JSON array
+  #   of multipleInstanceId values; returns {id, completedDate?, commandGuid})
+
+  /ProductionEntriesImportCommands:
+    post:
+      operationId: importProductionEntries
+      tags: [Metadocuments]
+      summary: Import NOK production records (CSV)
+      description: |
+        Imports NOK (non-conforming pieces) production records from a CSV file and attaches them to the job metadocuments matched by the work order number. Exactly one file is expected as a multipart content. The import is asynchronous (`202 Accepted` + `location` of the command result at the generic `api/commandResults/{id}`).
+
+        __File format__
+
+        * UTF-8 encoding (optional BOM); the delimiter `,` or `;` is auto-detected from the header row and must be used consistently
+        * a header row with the columns (names are case-insensitive): `MeasurementId`, `WorkOrderNumber`, `TimeStamp`, `Value`
+        * every row must fill all four columns
+
+        __Matching rules__ (a violating row is skipped and reported):
+
+        * exactly one job metadocument with the row's `WorkOrderNumber` must exist on the measurement
+        * all timestamps of a work order must lie within the time range of the matched job
+        * the job must not already contain manually created production entries
+        * the user must have access to every `MeasurementId` referenced by the file
+
+        __Effects__
+
+        * the imported records are attached to the job as one batch: the job receives a `links` item of type `ProductionEntries`, and the manual production-entry operations (`POST`/`PATCH`/`DELETE .../ProductionEntries`) respond with `405 Method Not Allowed` for it from then on
+        * the records enter the analytics as NOK quantities (e.g. the `nok` and `Quality` metrics of `/MeasurementMetricsQuery2`); they are not returned in the `productionEntries` array of the metadocument
+        * a repeated import of the same work order replaces the previously imported batch
+
+        __Command result__
+
+        * `Success` - all rows were imported
+        * `Failed` with the reason `Imported X rows from Y.` - some rows were skipped (see the matching rules)
+        * `DataError` - the file could not be parsed at all (wrong encoding, unrecognized delimiter, missing column)
+
+        __Configuration__
+
+        The CSV parsing can be customized per customer account on request - contact the Plantyst support. Configurable options: the time zone the timestamps are interpreted in, the culture used for parsing dates and numbers, and custom column names mapped to the expected ones. (The job types import supports the same time zone and culture configuration - see `/JobTypesImportCommands`.)
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  contentMediaType: text/csv
+                  description: |
+                    The CSV file with the NOK records (UTF-8, comma or semicolon separated, with a header row). Example:
+
+                    ```
+                    MeasurementId,WorkOrderNumber,TimeStamp,Value
+                    3,WO-42,2026-07-12T04:15:00Z,5
+                    3,WO-42,2026-07-12T04:45:00Z,3
+                    ```
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The multipart data are invalid or more than one file was uploaded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiMessage"
+              example:
+                Message: Only single file upload is supported.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The user has no customer account (subscription).
+        "415":
+          description: The request content is not a MIME multipart content.
+
   # ---------------------------------------------------------------------------
   # Downtime Codes
   # ---------------------------------------------------------------------------
@@ -1825,6 +2232,301 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
   # ---------------------------------------------------------------------------
+  # Measurement Configuration
+  # ---------------------------------------------------------------------------
+  /MeasurementTags:
+    get:
+      operationId: getMeasurementTags
+      tags: [Measurement Configuration]
+      summary: List tags
+      description: |
+        Returns all tags available in the customer account of the given measurement (not only the tags assigned to it).
+
+        Required access right: _View_.
+      parameters:
+        - name: measurementId
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The tags of the customer account.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+                  _embedded:
+                    type: object
+                    properties:
+                      tag:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Tag"
+              example:
+                _links:
+                  self:
+                    href: /Api/Tags
+                _embedded:
+                  tag:
+                    - id: "356"
+                      title: Priority
+                      color: "#1ABC9C"
+                      _links:
+                        self:
+                          href: /Api/Tag/356
+                    - id: "702"
+                      title: RS485
+                      color: "#9B59B6"
+                      _links:
+                        self:
+                          href: /Api/Tag/702
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createMeasurementTag
+      tags: [Measurement Configuration]
+      summary: Create tag and assign it
+      description: |
+        Creates a new tag and assigns it to the measurement. Unlike the metadocument operations, the tag operations are synchronous - the response directly contains the created tag.
+
+        Required access right: _Admin_.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [MeasurementId, Title, Color]
+              properties:
+                MeasurementId:
+                  type: integer
+                Title:
+                  type: string
+                Color:
+                  type: string
+                  description: "The HTML color of the tag (e.g. `#3498DB`)."
+            example:
+              MeasurementId: 3
+              Title: Priority
+              Color: "#3498DB"
+      responses:
+        "200":
+          description: The created tag.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/Tag"
+              example:
+                id: "736"
+                title: Priority
+                color: "#3498DB"
+                _links:
+                  self:
+                    href: /Api/Tag/736
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /MeasurementTags/{measurementId}/{tagId}:
+    parameters:
+      - name: measurementId
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: tagId
+        in: path
+        required: true
+        schema:
+          type: integer
+    put:
+      operationId: assignMeasurementTag
+      tags: [Measurement Configuration]
+      summary: Assign tag
+      description: |
+        Assigns an existing tag to the measurement.
+
+        Required access right: _Admin_.
+      responses:
+        "200":
+          description: The tag was already assigned to the measurement; nothing changed.
+        "201":
+          description: The tag was assigned to the measurement.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The tag or the measurement does not exist.
+    patch:
+      operationId: updateMeasurementTag
+      tags: [Measurement Configuration]
+      summary: Update tag
+      description: |
+        Updates the title and the color of the tag. Note that the change affects the tag itself - it is visible on every measurement the tag is assigned to.
+
+        Required access right: _Admin_.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Title:
+                  type: string
+                Color:
+                  type: string
+                  description: "The HTML color of the tag (e.g. `#123456`)."
+            example:
+              Title: Priority A
+              Color: "#123456"
+      responses:
+        "200":
+          description: The tag was updated.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The tag is not assigned to the measurement.
+    delete:
+      operationId: unassignMeasurementTag
+      tags: [Measurement Configuration]
+      summary: Remove tag assignment
+      description: |
+        Removes the assignment of the tag to the measurement. Removing the last assignment deletes the tag from the customer account entirely.
+
+        Required access right: _Admin_.
+      responses:
+        "200":
+          description: The assignment was removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The tag is not assigned to the measurement.
+
+  /MeasurementShiftSystems:
+    get:
+      operationId: getMeasurementShiftSystems
+      tags: [Measurement Configuration]
+      summary: List shift systems
+      description: |
+        Returns the shift systems of the measurement, ordered by their validity: the first item is always the built-in default shift system (`id` `0`, three 8-hour shifts), followed by the configured systems with their `validFrom` (a configured system applies from its `validFrom` until the `validFrom` of a newer one).
+
+        A shift is defined by the start and end hour and minute of the day; an overnight shift wraps midnight (e.g. `hourFrom: 22`, `hourTo: 6`). The optional `type` is the display label of the shift.
+
+        The shift systems are read-only in the API - they are managed in the Portal settings.
+
+        Required access right: _View_.
+      parameters:
+        - name: measurementId
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The shift systems of the measurement.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+                  _embedded:
+                    type: object
+                    properties:
+                      measurementShiftSystem:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              description: The shift system identifier; `0` for the built-in default system.
+                            validFrom:
+                              type: [string, "null"]
+                              format: date-time
+                              description: The start of the validity of the system.
+                            _links:
+                              $ref: "#/components/schemas/HalLinks"
+                            _embedded:
+                              type: object
+                              properties:
+                                shift:
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: integer
+                                      hourFrom:
+                                        type: integer
+                                      minuteFrom:
+                                        type: integer
+                                      hourTo:
+                                        type: integer
+                                      minuteTo:
+                                        type: integer
+                                      type:
+                                        type: string
+                                        description: The optional display label of the shift.
+                                      _links:
+                                        $ref: "#/components/schemas/HalLinks"
+              example:
+                _links:
+                  self:
+                    href: /Api/MeasurementShiftSystems
+                _embedded:
+                  measurementShiftSystem:
+                    - id: 1418
+                      validFrom: "2014-12-31T23:00:00Z"
+                      _links:
+                        self:
+                          href: /Api/MeasurementShiftSystems/1418
+                      _embedded:
+                        shift:
+                          - id: 3581
+                            hourFrom: 21
+                            minuteFrom: 0
+                            hourTo: 6
+                            minuteTo: 0
+                            _links:
+                              self:
+                                href: /Api/Shift/3581
+                          - id: 3582
+                            hourFrom: 6
+                            minuteFrom: 0
+                            hourTo: 14
+                            minuteTo: 0
+                            _links:
+                              self:
+                                href: /Api/Shift/3582
+                          - id: 3583
+                            hourFrom: 14
+                            minuteFrom: 0
+                            hourTo: 21
+                            minuteTo: 0
+                            _links:
+                              self:
+                                href: /Api/Shift/3583
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------------------
   # Job Types
   # ---------------------------------------------------------------------------
   /JobTypes:
@@ -1954,6 +2656,8 @@ paths:
         Required access right: _DataAdmin_ (for all affected measurements; insufficient rights on any of them cause the `DataError` command result).
 
         The import is asynchronous: the response contains the relative URL (`location`) of the command result. Poll the URL until the `result` reaches `Success` or `DataError` (the `reason` property then describes the problem, e.g. `Header does not contain any valid field.` or `Title must be defined.`).
+
+        __Configuration:__ the CSV parsing (the time zone the dates are interpreted in and the culture used for parsing dates and numbers) can be customized per customer account on request - contact the Plantyst support.
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
@@ -4434,6 +5138,20 @@ components:
                 type: array
                 items:
                   $ref: "#/components/schemas/Metric"
+
+    Tag:
+      type: object
+      properties:
+        id:
+          type: string
+          description: The tag identifier (returned as a string).
+        title:
+          type: string
+        color:
+          type: string
+          description: "The HTML color of the tag (e.g. `#3498DB`)."
+        _links:
+          $ref: "#/components/schemas/HalLinks"
 
   responses:
     Unauthorized:
