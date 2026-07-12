@@ -135,8 +135,8 @@
 
       /* ============ HIDE THE BOTTOM SIDEBAR LAUNCHER ============ */
       .scalar-app .open-api-client-button,
-      .scalar-app .scalar-mcp-layer { display: none !important; }
-      .scalar-app .flex-1 a { display: none !important; }
+      .scalar-app .scalar-mcp-layer,
+      .scalar-app a[href*="scalar.com"] { display: none !important; }
     `;
 
     Scalar.createApiReference('#app', {
