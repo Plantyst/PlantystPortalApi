@@ -119,6 +119,17 @@ tags:
       __Access rights__
 
       Reading metadocuments requires the _View_ right; creating, updating and deleting requires the _Contributor_ right. Metadocuments marked `readOnly` and properties locked by another user (`locks`) cannot be modified; users with the _Admin_ right bypass the locks. Comments can be updated only by their author; deleting another user's comment requires the _Admin_ right.
+  - name: Tasks
+    description: |
+      Tasks attached to the metadocuments - simple to-do items (e.g. "replace the mold") created over a job, downtime or annotation. In the Portal, the tasks appear on the metadocument detail and in the task overview.
+
+      A task carries a `title`, an optional `dueDate` (the planned date) and `deadline` (the latest date it should be finished), and its completion state (`completedDate`). The metadocument shows its task as the read-only `task` property (`{id, initialTitle}`).
+
+      __Beta:__ the Tasks API is a Beta version - improvements are under development and the contract may still change. Do not build critical flows on it yet.
+
+      The management operations follow the asynchronous command pattern (`202 Accepted` + `location`, generic command results). Every change assigns a new `commandGuid` to the task; the update and delete commands require the current value as `OriginGuid` - re-read the task before a change.
+
+      Reading the tasks requires the _View_ right of the measurement of the linked metadocument; creating, updating and deleting requires the _Contributor_ right, and the measurement must belong to the current customer account of the user.
   - name: Downtime Codes
     description: |
       The downtime code dictionary classifies downtimes by their cause. Every measurement has its own list of codes; a downtime metadocument references a code through its `key` (the `DowntimeCodeKey` property, see Metadocuments).
@@ -1761,6 +1772,314 @@ paths:
           description: The request content is not a MIME multipart content.
 
   # ---------------------------------------------------------------------------
+  # Tasks
+  # ---------------------------------------------------------------------------
+  /TaskEntries:
+    get:
+      operationId: getTaskEntries
+      tags: [Tasks]
+      summary: List tasks (Beta)
+      description: |
+        Returns the tasks of the customer account of the user, together with the users and the metadocuments they belong to (in `_embedded`). With `fromCompletedDate`, the completed tasks are limited to those completed at or after the given time (open tasks are always included); without it, the whole task history is returned.
+
+        __Known issue:__ on accounts with a longer task history, the call without `fromCompletedDate` may currently fail with `500 Internal Server Error`. Always pass `fromCompletedDate` - it also keeps the response reasonably small.
+
+        Required access right: _View_ (tasks of inaccessible measurements are omitted).
+      parameters:
+        - name: fromCompletedDate
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Include only the tasks completed at or after this time (open tasks are always included).
+      responses:
+        "200":
+          description: The tasks with the related users and metadocuments.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+                  _embedded:
+                    type: object
+                    properties:
+                      taskEntry:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/TaskEntry"
+                      user:
+                        type: array
+                        items:
+                          type: object
+                          description: The users referenced by the tasks and their metadocuments.
+                      metadocument:
+                        type: array
+                        items:
+                          type: object
+                          description: The metadocuments the tasks belong to (see Metadocuments).
+              example:
+                _links:
+                  self:
+                    href: /Api/TaskEntries
+                _embedded:
+                  taskEntry:
+                    - id: 332011b2-f82f-4b05-afb5-a55cc6e71418
+                      title: Check the tooling
+                      metadocumentGuid: 112e6ba3-5857-4fde-b22a-b6a0c2c9de54
+                      commandGuid: f2af1aaf-2b2b-432e-99a5-fd8be1fb1389
+                      createdDate: "2026-07-12T10:54:03Z"
+                      dueDate: "2026-07-13T06:00:00Z"
+                      deadline: "2026-07-14T06:00:00Z"
+                      _links:
+                        self:
+                          href: /Api/TaskEntries/332011b2-f82f-4b05-afb5-a55cc6e71418
+                        metadocument:
+                          href: /Api/Metadocuments/112e6ba3-5857-4fde-b22a-b6a0c2c9de54
+                  user:
+                    - userId: 92
+                      name: Jan Novák
+                      _links:
+                        self:
+                          href: /Api/Users/92
+                  metadocument:
+                    - guid: 112e6ba3-5857-4fde-b22a-b6a0c2c9de54
+                      type: 2
+                      title: Work order 42
+                      measurementId: 3
+                      from: "2026-07-12T08:00:00Z"
+                      to: "2026-07-12T09:00:00Z"
+                      task:
+                        id: 332011b2-f82f-4b05-afb5-a55cc6e71418
+                        initialTitle: Check the tooling
+                      _links:
+                        self:
+                          href: /Api/Metadocuments/112e6ba3-5857-4fde-b22a-b6a0c2c9de54
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: getTaskEntriesByIds
+      tags: [Tasks]
+      summary: Get tasks by identifiers (Beta)
+      description: |
+        Returns the given tasks (the body is a plain JSON array of the task identifiers), in the same shape as the task list.
+
+        Required access right: _View_ (of the measurements of all requested tasks).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: string
+            example: ["332011b2-f82f-4b05-afb5-a55cc6e71418"]
+      responses:
+        "200":
+          description: The tasks with the related users and metadocuments (the same shape as the task list).
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Some of the tasks are not accessible to the user.
+        "404":
+          description: Some of the identifiers do not exist.
+
+  /TaskEntries/{id}:
+    get:
+      operationId: getTaskEntry
+      tags: [Tasks]
+      summary: Get task (Beta)
+      description: |
+        Returns the task with the embedded users and metadocument.
+
+        Required access right: _View_ (of the measurement of the task).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The task.
+          content:
+            application/hal+json:
+              schema:
+                $ref: "#/components/schemas/TaskEntry"
+              example:
+                id: 332011b2-f82f-4b05-afb5-a55cc6e71418
+                title: Check the tooling
+                metadocumentGuid: 112e6ba3-5857-4fde-b22a-b6a0c2c9de54
+                commandGuid: f2af1aaf-2b2b-432e-99a5-fd8be1fb1389
+                createdDate: "2026-07-12T10:54:03Z"
+                dueDate: "2026-07-13T06:00:00Z"
+                deadline: "2026-07-14T06:00:00Z"
+                _links:
+                  self:
+                    href: /Api/TaskEntries/332011b2-f82f-4b05-afb5-a55cc6e71418
+                  metadocument:
+                    href: /Api/Metadocuments/112e6ba3-5857-4fde-b22a-b6a0c2c9de54
+                _embedded:
+                  user:
+                    - userId: 92
+                      name: Jan Novák
+                      _links:
+                        self:
+                          href: /Api/Users/92
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The task does not exist.
+
+  /TaskEntryAddCommands:
+    post:
+      operationId: addTaskEntry
+      tags: [Tasks]
+      summary: Create task (Beta)
+      description: |
+        Creates a task attached to the given metadocument. The operation is an asynchronous command (`202 Accepted` + `location` of the command result).
+
+        Required access right: _Contributor_ (of the measurement of the metadocument); the measurement must belong to the current customer account of the user, otherwise `400 Bad Request`.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [Title, MetadocumentGuid]
+              properties:
+                Title:
+                  type: string
+                  description: The description of the task; must not be empty.
+                MetadocumentGuid:
+                  type: string
+                  format: uuid
+                DueDate:
+                  type: [string, "null"]
+                  format: date-time
+                  description: The planned date of the task.
+                Deadline:
+                  type: [string, "null"]
+                  format: date-time
+                  description: The latest date the task should be finished.
+            example:
+              Title: Check the tooling
+              MetadocumentGuid: 112e6ba3-5857-4fde-b22a-b6a0c2c9de54
+              DueDate: "2026-07-13T06:00:00Z"
+              Deadline: "2026-07-14T06:00:00Z"
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The `Title` or `MetadocumentGuid` is missing, or the measurement does not belong to the current customer account of the user.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The metadocument does not exist or the user does not have the Contributor right.
+
+  /TaskEntryUpdateCommands:
+    post:
+      operationId: updateTaskEntry
+      tags: [Tasks]
+      summary: Update task (Beta)
+      description: |
+        Updates the task. Only the properties present in the payload are changed (merge semantics):
+
+        * `State: Completed` completes the task (sets its `completedDate` and the completing user; an already completed task keeps the original values), `State: Open` re-opens it
+        * `Title` can be changed but not emptied (`400 Bad Request`)
+        * `DueDate` and `Deadline` can be set or cleared with `null`
+
+        `OriginGuid` must be the current `commandGuid` of the task - every change assigns a new value, so re-read the task before a subsequent change.
+
+        Required access right: _Contributor_; the measurement must belong to the current customer account of the user.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [Id, OriginGuid]
+              properties:
+                Id:
+                  type: string
+                OriginGuid:
+                  type: string
+                  format: uuid
+                  description: The current `commandGuid` of the task.
+                Title:
+                  type: string
+                State:
+                  type: string
+                  enum: [Completed, Open]
+                DueDate:
+                  type: [string, "null"]
+                  format: date-time
+                Deadline:
+                  type: [string, "null"]
+                  format: date-time
+            example:
+              Id: 332011b2-f82f-4b05-afb5-a55cc6e71418
+              OriginGuid: f2af1aaf-2b2b-432e-99a5-fd8be1fb1389
+              State: Completed
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The `Id` or `OriginGuid` is missing, the `State` is invalid, the `Title` would become empty, or the measurement does not belong to the current customer account.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The task does not exist (or is deleted), or the user does not have the Contributor right.
+
+  /TaskEntryDeleteCommands:
+    post:
+      operationId: deleteTaskEntry
+      tags: [Tasks]
+      summary: Delete task (Beta)
+      description: |
+        Deletes the task (a soft delete - the task disappears from the lists).
+
+        __Known issue:__ the delete command currently fails with `500 Internal Server Error`; until it is fixed, close tasks by completing them (`/TaskEntryUpdateCommands` with `State: Completed`).
+
+        Required access right: _Contributor_; the measurement must belong to the current customer account of the user.
+      parameters:
+        - $ref: "#/components/parameters/CommandCustomId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [Id, OriginGuid]
+              properties:
+                Id:
+                  type: string
+                OriginGuid:
+                  type: string
+                  format: uuid
+                  description: The current `commandGuid` of the task.
+            example:
+              Id: 332011b2-f82f-4b05-afb5-a55cc6e71418
+              OriginGuid: f2af1aaf-2b2b-432e-99a5-fd8be1fb1389
+      responses:
+        "202":
+          $ref: "#/components/responses/CommandAccepted"
+        "400":
+          description: The `Id` or `OriginGuid` is missing, or the measurement does not belong to the current customer account.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The task does not exist (or is already deleted), or the user does not have the Contributor right.
+
+  # ---------------------------------------------------------------------------
   # Downtime Codes
   # ---------------------------------------------------------------------------
   /DowntimeDictionary:
@@ -3368,6 +3687,13 @@ paths:
   #   {MeasurementId, From = quarter start in the measurement time zone, TimeSpan: "q",
   #   MetricName, Value}; 201 with empty body for both create and update;
   #   Value null zeroes the quota but does not remove the record)
+  # * POST Api/TargetObjectiveAddCommands / TargetObjectiveUpdateCommands /
+  #   TargetObjectiveArchiveCommands / TargetObjectiveDeleteCommands - management
+  #   of the KPI target objectives; Add: {Metric, Title, Scope: {Id}, Periods:
+  #   [{ValidFrom, Period, Rules: [{Criterion (Span), Color, Priority}]}]},
+  #   Update takes TargetObjectiveId + the same shape, Archive/Delete take
+  #   {TargetObjectiveId}; the feature is still heavily in progress - keep
+  #   internal until it stabilizes
 
   # ---------------------------------------------------------------------------
   # Command Results
@@ -5152,6 +5478,43 @@ components:
           description: "The HTML color of the tag (e.g. `#3498DB`)."
         _links:
           $ref: "#/components/schemas/HalLinks"
+
+    TaskEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          description: The task identifier.
+        title:
+          type: string
+        metadocumentGuid:
+          type: string
+          format: uuid
+          description: The metadocument the task is attached to.
+        commandGuid:
+          type: string
+          format: uuid
+          description: The identifier of the command that created or last changed the task; expected as `OriginGuid` by the update and delete commands.
+        createdDate:
+          type: string
+          format: date-time
+        completedDate:
+          type: [string, "null"]
+          format: date-time
+          description: The completion time; `null` for an open task.
+        dueDate:
+          type: [string, "null"]
+          format: date-time
+          description: The planned date of the task.
+        deadline:
+          type: [string, "null"]
+          format: date-time
+          description: The latest date the task should be finished.
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+        _embedded:
+          type: object
+          description: The embedded users (and the metadocument on the single-task endpoint).
 
   responses:
     Unauthorized:
