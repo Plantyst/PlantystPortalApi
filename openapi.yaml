@@ -8,6 +8,23 @@ info:
   description: |
     Plantyst Portal API is a REST API designed to access data related to customer measurements like basic time series, metrics or annotations.
 
+    ## Getting started
+
+    The credentials are issued on request at [support@plantyst.com](mailto:support@plantyst.com). Two mechanisms are available (see Authorization for the details), each suited for a different kind of integration:
+
+    * __API key__ - a per-user secret key, best suited for server-to-server integrations, typically reading the data. Keep in mind that the key is bound to a specific Plantyst user: everything written with it (downtimes, comments, production records, ...) is recorded in that user's name.
+    * __OAuth2__ - the authorization code flow, best suited for interactive applications used by multiple users - each user works under their own identity.
+
+    The quickest way to verify the access is to ask who you are:
+
+    ```
+    curl -H "X-API-KEY: {api_key}" https://portal.plantyst.com/api/Users/Me
+    ```
+
+    The response describes the user the credential is bound to - check that it is the expected account. A natural next call is `GET /Measurements` - the list of the measurements the user can access.
+
+    ## Response format (HAL)
+
     Some API responses use the HAL convention. HAL (Hypertext Application Language) is a standard convention for defining hypermedia such as links to external resources within JSON or XML code. The standard was initially proposed in June 2012 specifically for use with JSON and has since become available in two variations, JSON and XML. The two associated MIME types are media type application/hal+xml and media type application/hal+json. See also https://en.wikipedia.org/wiki/Hypertext_Application_Language.
 
     To receive responses in the HAL format, send the `Accept: application/hal+json` header with the request. Without this header, the same data are returned in an alternative plain JSON serialization (embedded collections as top-level properties and `_links` as an array of link objects). The examples in this documentation show the HAL format.
@@ -58,6 +75,45 @@ info:
     | Measurement lifecycle & data sources | asynchronous; some conflicts synchronous (`409`) | `api/commandResults/{id}` |
     | Measurement tags | synchronous (the response directly carries the outcome) | - |
     | SCIM Provisioning | synchronous (SCIM protocol semantics) | - |
+
+    ## Common workflows
+
+    __Recording a downtime cause__
+
+    1. Read the downtime code dictionary of the measurement - `GET /DowntimeDictionary?id={measurementId}` - and find the `key` of the desired code.
+    2. Set the code to the downtime metadocument - `PATCH /Metadocuments/{guid}` with `{"DowntimeCodeKey": "..."}`.
+    3. Leave the `Title` of the downtime empty - the Portal displays the dictionary description of the code (see the best practices in Metadocuments).
+    4. Poll the command result returned by the PATCH until it reaches `Success`.
+
+    __Starting and finishing a job__
+
+    1. Read the job plan - `GET /JobTypes?measurementId={id}` - and pick the planned job.
+    2. Start the job by creating a job metadocument - `POST /Metadocuments` with `Type: 2`, `From`, the `Title` and typically the `WorkOrderNumber` and `Setpoint` of the planned job; leave `To` unset while the job is running.
+    3. Finish the job by setting its end - `PATCH /Metadocuments/{guid}` with the `To` time.
+
+    __Recording production (good and scrap pieces)__
+
+    1. Add the production records to the running job - `POST /Metadocuments/{guid}/ProductionEntries` with the `Type` (e.g. `OK`, `NOK`), the `Value` (quantity) and the `Time` within the job range.
+    2. The recorded quantities drive the quality metrics (`ok`, `nok`, `Quality`) of the OEE metric set (see Measurement Data & Metrics).
+
+    __Reading data for a dashboard__
+
+    1. List the accessible measurements - `GET /Measurements`.
+    2. Read the aggregated production data - `POST /MeasurementTimeSeriesAggregationsQuery`.
+    3. Read the computed KPIs - `POST /MeasurementMetricsQuery` (production and uptime), or `POST /MeasurementMetricsQuery2` for the OEE set.
+    4. Read the operational records of the range - `POST /MetadocumentsQuery` (jobs, downtimes, annotations).
+
+    __Receiving webhook notifications__
+
+    1. Register the webhook - contact [support@plantyst.com](mailto:support@plantyst.com) with the callback URL (see Webhooks for the details and the payload contract).
+    2. Receive the events - the platform POSTs an envelope with the `eventType` (`MetadocumentCreate` / `MetadocumentUpdate` / `MetadocumentDelete`) and the changed metadocument in `data`.
+    3. Acknowledge every delivery quickly with a `2xx` response - otherwise the event is delivered again.
+    4. Skip the echoes of your own changes: compare the `commandGuid` of the event with the command identifiers of your own API calls (the last segment of the `location` URL returned by a command).
+    5. When the handler needs more data, call the API back with the token from `authorization.value` of the envelope.
+
+    ## Compatibility
+
+    The API is not versioned. Backward compatible extensions - new properties in responses, new endpoints - may appear at any time, so clients must ignore unknown properties. The groups marked __Beta__ may still change in incompatible ways - do not build critical flows on them.
   contact:
     name: Plantyst support
     email: support@plantyst.com
