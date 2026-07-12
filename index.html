@@ -4,13 +4,144 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Plantyst Portal API</title>
+  <meta name="description" content="Plantyst Portal API - REST API for accessing measurement data, metrics and annotations.">
+  <meta name="theme-color" content="#1eb7ec">
+  <link rel="icon" type="image/png" sizes="32x32" href="./assets/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="./assets/favicon-192x192.png">
+  <link rel="apple-touch-icon" href="./assets/favicon-192x192.png">
 </head>
 <body>
   <div id="app"></div>
   <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.62.5/dist/browser/standalone.min.js"></script>
   <script>
+    /* Plantyst brand palette:
+       navy #2d3e50 · dark green #4f8b24 · lime #82cd36 · blue #1eb7ec
+       light blue #71ceec · green #66b431 · light gray #8e96a9 · gray #6c717f · dark gray #5b5859 */
+    const brandCss = `
+      /* ============ LIGHT MODE ============ */
+      .light-mode {
+        --scalar-color-1: #2d3e50;               /* primary text - navy */
+        --scalar-color-2: #6c717f;               /* secondary text */
+        --scalar-color-3: #8e96a9;               /* tertiary text */
+        --scalar-color-accent: #0f7ba3;          /* links - darkened brand blue (AA contrast on white) */
+
+        --scalar-background-1: #ffffff;
+        --scalar-background-2: #f5f8fa;
+        --scalar-background-3: #e7edf1;
+        --scalar-background-accent: rgba(30, 183, 236, 0.12);
+
+        --scalar-border-color: rgba(45, 62, 80, 0.12);
+
+        --scalar-button-1: #0f7ba3;              /* primary button (brand blue, white text) */
+        --scalar-button-1-color: #ffffff;
+        --scalar-button-1-hover: #0c6688;
+
+        /* HTTP methods / semantic colors - GET blue & POST green from the brand */
+        --scalar-color-green: #4f8b24;
+        --scalar-color-red: #d81b2c;
+        --scalar-color-yellow: #c98a00;
+        --scalar-color-blue: #1493c7;
+        --scalar-color-orange: #e07d10;
+        --scalar-color-purple: #6a3fd1;
+
+        --scalar-scrollbar-color: rgba(45, 62, 80, 0.22);
+        --scalar-scrollbar-color-active: rgba(45, 62, 80, 0.42);
+      }
+
+      /* ============ DARK MODE ============ */
+      .dark-mode {
+        --scalar-color-1: rgba(255, 255, 255, 0.92);
+        --scalar-color-2: rgba(255, 255, 255, 0.62);
+        --scalar-color-3: rgba(255, 255, 255, 0.44);
+        --scalar-color-accent: #35c1ef;          /* bright brand blue on a dark background */
+
+        --scalar-background-1: #14202b;          /* dark navy derived from #2d3e50 */
+        --scalar-background-2: #1b2b39;
+        --scalar-background-3: #2d3e50;          /* brand navy as an elevated surface */
+        --scalar-background-accent: rgba(30, 183, 236, 0.20);
+
+        --scalar-border-color: rgba(255, 255, 255, 0.12);
+
+        --scalar-button-1: #1eb7ec;              /* primary button (bright brand blue, dark text) */
+        --scalar-button-1-color: #08151d;
+        --scalar-button-1-hover: #3fc4ef;
+
+        --scalar-color-green: #82cd36;
+        --scalar-color-red: #ff6b6b;
+        --scalar-color-yellow: #e7c14a;
+        --scalar-color-blue: #35c1ef;
+        --scalar-color-orange: #f2a24a;
+        --scalar-color-purple: #9a7be6;
+
+        --scalar-scrollbar-color: rgba(255, 255, 255, 0.20);
+        --scalar-scrollbar-color-active: rgba(255, 255, 255, 0.40);
+      }
+
+      /* ============ SIDEBAR ============ */
+      .light-mode .t-doc__sidebar {
+        --scalar-sidebar-background-1: #f7fafc;
+        --scalar-sidebar-color-1: #2d3e50;
+        --scalar-sidebar-color-2: #6c717f;
+        --scalar-sidebar-border-color: rgba(45, 62, 80, 0.10);
+
+        --scalar-sidebar-item-hover-background: rgba(45, 62, 80, 0.06);
+        --scalar-sidebar-item-hover-color: #2d3e50;
+        --scalar-sidebar-item-active-background: rgba(30, 183, 236, 0.14);
+        --scalar-sidebar-color-active: #0f7ba3;
+
+        --scalar-sidebar-search-background: #ffffff;
+        --scalar-sidebar-search-border-color: rgba(45, 62, 80, 0.14);
+        --scalar-sidebar-search-color: #6c717f;
+      }
+      .dark-mode .t-doc__sidebar {
+        --scalar-sidebar-background-1: #101a23;
+        --scalar-sidebar-color-1: rgba(255, 255, 255, 0.92);
+        --scalar-sidebar-color-2: rgba(255, 255, 255, 0.60);
+        --scalar-sidebar-border-color: rgba(255, 255, 255, 0.10);
+
+        --scalar-sidebar-item-hover-background: rgba(255, 255, 255, 0.06);
+        --scalar-sidebar-item-hover-color: #ffffff;
+        --scalar-sidebar-item-active-background: rgba(30, 183, 236, 0.20);
+        --scalar-sidebar-color-active: #35c1ef;
+
+        --scalar-sidebar-search-background: rgba(255, 255, 255, 0.04);
+        --scalar-sidebar-search-border-color: rgba(255, 255, 255, 0.12);
+        --scalar-sidebar-search-color: rgba(255, 255, 255, 0.55);
+      }
+
+      /* ============ TYPOGRAPHY & SHAPES ============ */
+      :root {
+        --scalar-radius: 8px;
+        --scalar-radius-lg: 10px;
+        --scalar-radius-xl: 14px;
+        --scalar-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        --scalar-font-code: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      }
+
+      /* ============ LOGO IN THE SIDEBAR HEADER ============
+         ./assets/logo.svg        - logo with dark text (light mode)
+         ./assets/logo-white.svg  - logo with white text (dark mode) */
+      .t-doc__sidebar::before {
+        content: "";
+        display: block;
+        height: 34px;
+        margin: 20px 18px 10px;
+        background-repeat: no-repeat;
+        background-position: left center;
+        background-size: contain;
+      }
+      .light-mode .t-doc__sidebar::before { background-image: url("./assets/logo.svg"); }
+      .dark-mode  .t-doc__sidebar::before { background-image: url("./assets/logo-white.svg"); }
+
+      /* ============ HIDE THE BOTTOM SIDEBAR LAUNCHER ============ */
+      .scalar-app .open-api-client-button,
+      .scalar-app .scalar-mcp-layer { display: none !important; }
+      .scalar-app .flex-1 a { display: none !important; }
+    `;
+
     Scalar.createApiReference('#app', {
       url: './openapi.yaml',
+      customCss: brandCss,
     })
   </script>
 </body>
