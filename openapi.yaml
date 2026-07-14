@@ -225,6 +225,12 @@ tags:
 
       Every command operation accepts an optional `commandCustomId` query parameter - a client-supplied identifier of the command. The command result can later be looked up with `GET /MetadocumentCommandResults?commandCustomId={id}` (useful when the response with the command location was lost).
 
+      __Text formatting and mentions__
+
+      The `description` of a metadocument and the `text` of the comments are plain strings in the API, but the Portal renders them as __Markdown__ (CommonMark).
+
+      A comment can additionally __mention a user or a team__ with a Markdown link that has a special target: `[Jan Novák](#userId:92)` mentions a user, `[Plantyst Team](#teamId:1)` mentions a team and expands to all its members. The link text is the displayed label; the target must keep the exact `#userId:{id}` / `#teamId:{id}` format (the user identifiers are the ones returned by `/Users` and in `_embedded.user`). The server processes the mentions asynchronously and notifies the mentioned users; only users with access to the measurement are notified.
+
       __Change history__
 
       Every processed metadocument command is recorded in an audit log that can be read with `POST /MetadocumentHistoryLogsQuery` - including the exact changes expressed as a JSON Patch document.
@@ -1849,13 +1855,14 @@ paths:
                 Text:
                   type: string
                   maxLength: 500
-                  description: The comment text.
+                  description: The comment text. Rendered as Markdown by the Portal; may mention users or teams (see the group description).
                 Time:
                   type: string
                   format: date-time
                   description: The comment time; when omitted, the current UTC time is used.
             example:
-              Text: Comment text.
+              Text: "Please check the tooling, [Jan Novák](#userId:92)"
+
       responses:
         "202":
           $ref: "#/components/responses/MetadocumentCommandAccepted"
@@ -4866,6 +4873,7 @@ components:
         text:
           type: string
           maxLength: 500
+          description: The comment text; rendered as Markdown by the Portal and may contain user or team mentions (see the group description).
         modificationTime:
           type: string
           format: date-time
