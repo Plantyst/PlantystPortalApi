@@ -532,6 +532,17 @@ paths:
         * `measurementDataVersion` array of measurement data versions
         * `measurementCustomField` array of all distinct custom fields assigned to measurements
         * `hierarchicalLocation` array of hierarchical locations the measurements belong to
+
+        __Reconstructing the location hierarchy__
+
+        The embedded `hierarchicalLocation` entries form a tree, encoded in each entry's `level` string. `level` is an opaque __materialized path__ - a `/`-delimited string, wrapped in a leading and trailing slash, that is unique per location and gains one segment with each level of nesting (`/51/` for a top-level location, `/51/77/` for a location one level below it). All ancestors of every returned location are themselves included in the array, so the whole tree can be rebuilt from this flat list using string operations on `level` alone, without further requests:
+
+        * __Parent__ - drop the last path segment; the parent is the entry whose `level` equals the remaining prefix (`/51/77/` -> `/51/`). An entry with a single segment (`/51/`) is a top-level location - its parent is the account root, which is not returned as a location.
+        * __Ancestors__ - every proper prefix of an entry's `level` is the `level` of one of its ancestors.
+        * __Children__ - the entries whose `level` starts with this entry's `level` and has exactly one more segment.
+        * __Depth__ - the number of path segments (the count of `/` minus one).
+
+        A measurement is attached to its location through the `hierarchicalLocation` link relation (`/Api/HierarchicalLocations/{id}`); match that id to a `hierarchicalLocation` entry to obtain the measurement's full location path.
       parameters:
         - name: groupId
           in: query
@@ -607,6 +618,13 @@ paths:
                       _links:
                         self:
                           href: /Api/HierarchicalLocations/51
+                    - hierarchicalLocationId: 77
+                      title: Line 1
+                      shortTitle: L1
+                      level: /51/77/
+                      _links:
+                        self:
+                          href: /Api/HierarchicalLocations/77
                   measurement:
                     - measurementId: 3
                       title: 01 Machine 1
@@ -4802,7 +4820,9 @@ components:
                     description: The location short title.
                   level:
                     type: string
-                    description: The position of the location in the hierarchy tree.
+                    description: |
+                      The position of the location within the hierarchy tree, encoded as an opaque __materialized path__: a `/`-delimited string, wrapped in a leading and trailing slash, that is unique per location and gains one segment with each level of nesting (`/51/` for a top-level location, `/51/77/` for a location one level below it). Rebuild the tree by comparing these strings - see the endpoint description for the rules.
+                    example: /51/77/
                   _links:
                     $ref: "#/components/schemas/HalLinks"
             measurement:
