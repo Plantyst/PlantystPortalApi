@@ -122,6 +122,13 @@ info:
     4. Skip the echoes of your own changes: compare the `commandGuid` of the event with the command identifiers of your own API calls (the last segment of the `location` URL returned by a command).
     5. When the handler needs more data, call the API back with the token from `authorization.value` of the envelope.
 
+    __Embedding a Portal screen in your own application__
+
+    1. Request an access device - contact [support@plantyst.com](mailto:support@plantyst.com) and receive its access key (see Embedded Views for the details).
+    2. Assign the user who should be shown - `POST /AccessDevices` with `{"AccessKey": "..."}`, called with that user's credential.
+    3. Embed the screen - `<iframe src="https://portal.plantyst.com/Online?AccessKey={accessKey}&v={measurementId}">`.
+    4. Switch the user at any time by repeating step 2 with another user's credential, then reload the `iframe` - the running screen is not notified of the change.
+
     ## Compatibility
 
     The API is not versioned. Backward compatible extensions - new properties in responses, new endpoints - may appear at any time, so clients must ignore unknown properties. The groups marked __Beta__ may still change in incompatible ways - do not build critical flows on them.
@@ -448,6 +455,38 @@ tags:
       __What changed__
 
       The `appliedChanges` property carries a JSON Patch (RFC 6902) document describing the changes applied by the command - useful for reacting only to specific properties (e.g. a path `/DowntimeCode` means the downtime code changed). Note that the patch paths use PascalCase property names, unlike the camelCase payload.
+
+  - name: Embedded Views
+    description: |
+      A Portal screen can be displayed inside a customer application in an `iframe`, signed in as a chosen Plantyst user - the user does not log in and never sees a Plantyst login screen. It is meant for shop-floor terminals, MES screens and internal dashboards that should show the live production data of the Portal next to the customer's own content.
+
+      __Access devices and access keys__
+
+      An __access device__ represents one embedding slot - typically one physical terminal or one place in the customer application. It is identified by an __access key__, a GUID that goes into the URL of the embedded screen. Exactly one Plantyst user is assigned to an access device at a time, and the embedded screen runs with that user's identity and access rights: it shows the measurements the user may see and any record it creates is attributed to the user.
+
+      Access devices are created on request at [support@plantyst.com](mailto:support@plantyst.com) - state how many devices you need and what each of them is for; you receive their access keys. There is currently no self-service management API.
+
+      __Embedding the screen__
+
+      Put the access key in the `AccessKey` query parameter of the screen URL and use it as the `src` of an `iframe`:
+
+      ```
+      <iframe src="https://portal.plantyst.com/Online?AccessKey=a4fc8b47-e618-4098-a1cc-35508afe281c&v=101"></iframe>
+      ```
+
+      The `Online` screen is the supported one - see `GET /Online` below for the parameters that preselect the measurements and the time range.
+
+      __Switching the user__
+
+      `POST /AccessDevices` assigns __the calling user__ to the access device and replaces the previous assignment. The credential the request is made with therefore decides who is shown in the embedded screen: to display a different user, call the endpoint with that user's credential (for several users, obtain their tokens through the OAuth2 authorization code flow - see Authorization).
+
+      A screen that is already open keeps running as the previously assigned user - the change does not reach it on its own. Reload the `iframe` from your application once the call succeeds.
+
+      Users can also be switched by physically presenting an RFID card to a reader connected to the access device; such a reader also refreshes the open screens by itself. That setup is arranged at [support@plantyst.com](mailto:support@plantyst.com).
+
+      __Security__
+
+      The access key is a credential: anyone who has it sees the data of the assigned user. Keep it on your server, render it only into pages that are already restricted to the right people, and be aware that it travels in the URL - it ends up in the browser history and in `Referer` headers. A screen opened with a valid access key can be framed by any origin.
 
   - name: Command Results
     description: |
@@ -4613,6 +4652,139 @@ paths:
         "409":
           description: The group cannot be deleted - it has child groups (only leaf groups can be deleted), or it represents the subscription or the directory.
 
+  # ---------------------------------------------------------------------------
+  # Embedded Views
+  # ---------------------------------------------------------------------------
+  /Online:
+    get:
+      operationId: getOnlineScreen
+      tags: [Embedded Views]
+      summary: Get the embedded Online screen
+      description: |
+        Returns the Online screen as an HTML page, signed in as the user currently assigned to the access device. This is not a REST endpoint - it is the URL to put into the `src` of an `iframe`.
+
+        Note that the screen lives on `https://portal.plantyst.com`, not under the `/api` prefix of the other endpoints, and that it is authorized by the `AccessKey` query parameter alone - the API credentials do not apply to it.
+
+        The first request with an access key establishes the session and answers with a `302` to the same URL; the browser follows it and renders the screen. Keep the `AccessKey` parameter in the URL - it is what binds the screen to the access device on every load.
+      security: []
+      servers:
+        - url: https://portal.plantyst.com
+      parameters:
+        - name: AccessKey
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: a4fc8b47-e618-4098-a1cc-35508afe281c
+          description: The access key of the access device. Obtained at support@plantyst.com.
+        - name: v
+          in: query
+          required: false
+          explode: true
+          schema:
+            type: array
+            items:
+              type: integer
+          example: [101, 102]
+          description: The measurements to display, repeated for each one (`v=101&v=102`). Measurements the assigned user cannot access are ignored.
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+          example: 2026-07-01T06:00Z
+          description: The beginning of the displayed time range (ISO-8601). A range in the future is ignored and the screen falls back to its default.
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+          example: 2026-07-01T14:00Z
+          description: The end of the displayed time range (ISO-8601).
+      responses:
+        "200":
+          description: The Online screen.
+          content:
+            text/html: {}
+        "302":
+          description: A redirect to follow - either back to the same URL once the session has been established, or to the login page when the access key is not a known access key or no user is assigned to the access device.
+        "403":
+          description: The assigned user does not have access to the Online screen.
+
+  /AccessDevices:
+    get:
+      operationId: getAccessDevices
+      tags: [Embedded Views]
+      summary: Get access devices
+      description: |
+        Gets the access devices the authenticated user is currently assigned to. Use it to check which embedding slots the user occupies, for example to confirm that a switch has been applied.
+      responses:
+        "200":
+          description: The access devices of the authenticated user.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+                  _embedded:
+                    type: object
+                    properties:
+                      accessDevice:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AccessDevice"
+              example:
+                _links:
+                  self:
+                    href: /Api/AccessDevices
+                _embedded:
+                  accessDevice:
+                    - accessDeviceId: 11
+                      accessKey: a4fc8b47-e618-4098-a1cc-35508afe281c
+                      _links:
+                        self:
+                          href: /Api/AccessDevices/11
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: assignAccessDevice
+      tags: [Embedded Views]
+      summary: Assign the current user to an access device
+      description: |
+        Assigns the authenticated user to the access device identified by the access key and removes the previous assignment. The operation is synchronous.
+
+        The assignment is always made for the user of the credential the request is made with - there is no way to assign somebody else. An embedded screen that is already open is not notified of the change and keeps running as the previously assigned user, so reload the `iframe` after a successful call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [AccessKey]
+              properties:
+                AccessKey:
+                  type: string
+                  format: uuid
+                  description: The access key of the access device to assign the user to.
+            example:
+              AccessKey: a4fc8b47-e618-4098-a1cc-35508afe281c
+      responses:
+        "204":
+          description: The user was assigned to the access device.
+        "400":
+          description: No access device with the given access key exists - the response body carries the reason. A missing request body yields the same status code with an empty body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiMessage"
+              example:
+                Message: Access device with given access key does not exist.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
 webhooks:
   metadocumentEvent:
     post:
@@ -4942,6 +5114,19 @@ components:
           items:
             type: string
             enum: [View, Contributor, DataAdmin, Admin, Owner]
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+
+    AccessDevice:
+      type: object
+      description: An access device - one slot for embedding a Portal screen into a customer application.
+      properties:
+        accessDeviceId:
+          type: integer
+        accessKey:
+          type: string
+          format: uuid
+          description: The key used in the `AccessKey` query parameter of the embedded screen URL. Treat it as a credential.
         _links:
           $ref: "#/components/schemas/HalLinks"
 
