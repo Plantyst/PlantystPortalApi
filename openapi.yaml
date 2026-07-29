@@ -193,9 +193,11 @@ tags:
 
       * __Time series__ (`/MeasurementTimeSeriesAggregationsQuery`) - the aggregated production data of a time range.
       * __Basic metrics__ (`/MeasurementMetricsQuery`) - the produced amount and the uptime share of a time range.
-      * __OEE metric set__ (`/MeasurementMetricsQuery2`, __Beta__) - the full OEE decomposition (availability x performance x quality) plus the fulfillment metrics. The planned production time comes from the measurement calendar (see Calendar) - without a calendar, the planned-time-based metrics are `null`. The endpoint is a Beta version - the set of returned metrics and their names may still change. The KPI terminology is explained in the [support center guide](https://support.plantyst.com/hc/cs/articles/17673220154908) (currently in Czech only).
+      * __OEE metric set__ (`/MeasurementMetricsQuery2`, __Beta__) - the full OEE decomposition (availability x performance x quality) plus the fulfillment metrics. The planned production time comes from the measurement calendar (see Calendar) - without a calendar, the planned-time-based metrics are `null`. The metrics are computed on the fly, so the queried range is __limited to 24 hours, at most 6 days old__ (see the operation). The endpoint is a Beta version - the set of returned metrics and their names may still change. The KPI terminology is explained in the [support center guide](https://support.plantyst.com/hc/cs/articles/17673220154908) (currently in Czech only).
 
       The metrics are returned as `{name, value}` pairs; a `value` is `null` when the metric cannot be computed from the available data. Reading requires the _View_ right.
+
+      All three endpoints take the queried range as a half-open interval `[From, To)` with both timestamps in UTC ISO 8601 (the `Z` suffix is required - a numeric offset is rejected).
   - name: Metadocuments
     description: |
       Resources related to metadocuments in the API. Metadocument is a general term for various types of measurement-related records. The `type` of the metadocument determines its meaning:
@@ -1441,6 +1443,10 @@ paths:
         * `Production` - the amount produced in the range, in the units of the measured quantity
         * `Uptime` - the share of the range the machine was running, in percent
 
+        __Always send `MaximumCount`__ - it truncates the returned metric list, and its default value `0` yields an empty `results` array. Use a value that covers the whole set (e.g. `2`).
+
+        The length of the queried range and its distance in the past are not limited, but a long range means a slow response - query only what you display.
+
         Required access right: _View_ (for all queried measurements, otherwise `403 Forbidden`).
       requestBody:
         required: true
@@ -1453,7 +1459,7 @@ paths:
                 - MeasurementId: 3
                   From: "2026-07-08T00:00:00Z"
                   To: "2026-07-09T00:00:00Z"
-                  MaximumCount: 100
+                  MaximumCount: 2
       responses:
         "200":
           description: The metrics, one result per query.
@@ -1467,14 +1473,15 @@ paths:
                       measurementId: 3
                       from: "2026-07-08T00:00:00Z"
                       to: "2026-07-09T00:00:00Z"
-                      maximumCount: 100
+                      maximumCount: 2
                     results:
                       - name: Production
                         value: 674078.0
                       - name: Uptime
                         value: 65.486
         "400":
-          description: The payload is invalid.
+          description: |
+            The payload is missing, or a query has an invalid time range (`From` later than or equal to `To`, or a timestamp that is not in UTC). The body describes the offending query, e.g. `{"Message": "The request is invalid.", "ModelState": {"payload.Queries[0]": ["Time range definition is invalid!"]}}`.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1504,6 +1511,17 @@ paths:
 
         A metric `value` is `null` when it cannot be computed - typically all planned-time-based metrics (`Availability`, `Performance`, `OEE`, ...) when the queried range contains no planned production time (the measurement calendar is empty).
 
+        ### Time range limits
+
+        The endpoint computes the metric set on the fly, so the queried range is limited:
+
+        * __Maximum range length: 24 hours__ - `To` - `From` must not exceed 24 hours (exactly 24 hours is accepted).
+        * __Maximum age: 6 days__ - `From` must not be older than 6 days before the current UTC time.
+
+        Both limits are validated __per query__ - a single query breaking them fails the whole request with `400`, and no results are computed for the remaining queries.
+
+        Note that the age limit is a __sliding window against the current UTC time__, not a calendar boundary: a range that was accepted yesterday is rejected today once its `From` passes the 6-day mark. Do not build retries or scheduled backfills on the assumption that an older range stays queryable.
+
         __Beta:__ the endpoint is a Beta version - the set of returned metrics and their names may still change.
 
         Required access right: _View_ (for all queried measurements, otherwise `403 Forbidden`).
@@ -1512,27 +1530,25 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/MetricsQueryPayload"
+              $ref: "#/components/schemas/OeeMetricsQueryPayload"
             example:
               Queries:
                 - MeasurementId: 3
                   From: "2026-07-08T00:00:00Z"
                   To: "2026-07-09T00:00:00Z"
-                  MaximumCount: 100
       responses:
         "200":
           description: The metric sets, one result per query.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MetricsQueryResult"
+                $ref: "#/components/schemas/OeeMetricsQueryResult"
               example:
                 results:
                   - query:
                       measurementId: 3
                       from: "2026-07-08T00:00:00Z"
                       to: "2026-07-09T00:00:00Z"
-                      maximumCount: 100
                     results:
                       - name: RunTime
                         value: 21540.0
@@ -1561,7 +1577,11 @@ paths:
                       - name: LastCycleTime
                         value: 0.153
         "400":
-          description: The payload is invalid.
+          description: |
+            The payload is invalid. Two distinct cases, distinguished by the body:
+
+            * a query __exceeds the time range limits__ (longer than 24 hours, or `From` older than 6 days) - the response has an __empty body__, so check the ranges of all queries
+            * a query has an __invalid time range definition__ (`From` later than or equal to `To`, or a timestamp that is not in UTC) - the body names the offending query, e.g. `{"Message": "The request is invalid.", "ModelState": {"payload.Queries[0]": ["Time range definition is invalid!"]}}`
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -5890,6 +5910,10 @@ components:
     MetricsQueryPayload:
       type: object
       required: [Queries]
+      description: |
+        The queries of the basic metrics. The count of queries in one request is not limited, but the queries are computed with a limited parallelism - split large batches.
+
+        The queried range is half-open: `From` is inclusive, `To` is exclusive. Both timestamps must be __UTC ISO 8601 with the `Z` suffix__ (e.g. `2026-07-08T00:00:00Z`) - a value with a numeric offset (`+02:00`) or without any zone is rejected with `400`.
       properties:
         Queries:
           type: array
@@ -5902,12 +5926,14 @@ components:
               From:
                 type: string
                 format: date-time
+                description: The inclusive lower bound of the queried range, in UTC ISO 8601 (`Z` suffix required). Must be earlier than `To`.
               To:
                 type: string
                 format: date-time
+                description: The exclusive upper bound of the queried range, in UTC ISO 8601 (`Z` suffix required). Must be later than `From` - an empty range (`From` = `To`) is rejected.
               MaximumCount:
                 type: integer
-                description: The maximum count of metrics to return.
+                description: The maximum count of metrics to return; the metrics over this count are cut off from the end of the list. Always send it - the default value `0` returns an empty `results` array.
 
     Metric:
       type: object
@@ -5944,6 +5970,68 @@ components:
                 type: array
                 items:
                   $ref: "#/components/schemas/Metric"
+
+    OeeMetricsQueryPayload:
+      type: object
+      required: [Queries]
+      description: |
+        The queries of the OEE metric set (Beta). The count of queries in one request is not limited, but the queries are computed with a limited parallelism - split large batches.
+
+        The queried range is half-open: `From` is inclusive, `To` is exclusive. Both timestamps must be __UTC ISO 8601 with the `Z` suffix__ (e.g. `2026-07-08T00:00:00Z`) - a value with a numeric offset (`+02:00`) or without any zone is rejected with `400`.
+
+        The range length and its age are limited - see the operation.
+      properties:
+        Queries:
+          type: array
+          items:
+            type: object
+            required: [MeasurementId, From, To]
+            properties:
+              MeasurementId:
+                type: integer
+              From:
+                type: string
+                format: date-time
+                description: The inclusive lower bound of the queried range, in UTC ISO 8601 (`Z` suffix required). Must be earlier than `To` and at most 6 days old.
+              To:
+                type: string
+                format: date-time
+                description: The exclusive upper bound of the queried range, in UTC ISO 8601 (`Z` suffix required). Must be later than `From` - an empty range (`From` = `To`) is rejected - and at most 24 hours after it.
+
+    OeeMetric:
+      type: object
+      description: One metric of the OEE set (Beta - the set of the returned metrics and their names may still change).
+      properties:
+        name:
+          type: string
+        value:
+          type: [number, "null"]
+          description: The value of the metric; `null` when it cannot be computed.
+
+    OeeMetricsQueryResult:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              query:
+                type: object
+                description: The copy of the original query.
+                properties:
+                  measurementId:
+                    type: integer
+                  from:
+                    type: string
+                    format: date-time
+                  to:
+                    type: string
+                    format: date-time
+              results:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OeeMetric"
 
     Tag:
       type: object
