@@ -6110,7 +6110,10 @@ components:
 
   responses:
     Unauthorized:
-      description: Authorization has been denied for this request.
+      description: |
+        Authorization has been denied for this request.
+
+        __A rejected authentication is currently answered with a `302` redirect to the login page__, not with `401` - the body carries this same message. The `401` documented here is the intended semantics. Disable automatic redirect following in the client and treat a `302` on an API URL as an authentication failure; a client branching only on `401` would miss it (see Authorization).
       content:
         application/json:
           schema:
