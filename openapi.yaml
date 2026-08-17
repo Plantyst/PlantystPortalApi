@@ -346,6 +346,17 @@ tags:
 
       * The event identifier (`id` in the URL) is the __Unix timestamp (in seconds) of the event start__. Changing the start of an event also changes its identifier.
       * Every event carries a `guid` - the identifier of the command that created or last changed it. It is passed as `OriginGuid` to the update, delete and operator commands, and a new value is assigned by every change (re-read the events before a subsequent change). A stale `OriginGuid` responds with `409 Conflict` (synchronously for the update).
+      * The `eventType` in the URL path is written in camelCase (`plannedProduction`, `plannedShutdown`); the reads return the same value in PascalCase (`"eventType": "PlannedProduction"`). The path segment is matched case-insensitively, so the value taken straight from a response works too.
+
+      __Events do not overlap__
+
+      The events of one measurement never overlap in time, __across both types__ - a planned shutdown cannot overlap a shift either, they share one timeline. A create whose range overlaps an existing event is rejected and nothing is written. The ranges are compared as half-open intervals `[FromDate, ToDate)`, so events that only touch (one ending exactly when the next starts) are accepted.
+
+      A create is therefore __not an upsert__: a request with the same `FromDate` as an existing event of the same type is refused as well, whether the rest of the payload is identical or differs - a different `ToDate` does not update the existing event.
+
+      This gives a useful guarantee: __creating a calendar event can be safely retried.__ When the client does not know whether an earlier attempt got through, repeating it either creates the event or is rejected - a duplicate cannot arise.
+
+      Every one of these rejections arrives as the `DataError` command result, never as `Conflict`, even though the cause is a collision with an existing event and the `reason` text may itself speak of a conflict. Clients distinguishing "the payload is wrong" from "it is already there" must count an overlap among the former.
 
       __Pauses__
 
@@ -3765,6 +3776,10 @@ paths:
         Creates a calendar event (a shift or a planned shutdown) on the measurement.
 
         Required access right: _DataAdmin_.
+
+        __The events of a measurement must not overlap__, and the rule spans both types - shifts and planned shutdowns share one timeline. A create colliding with an existing event is accepted with `202` and then finishes with the `DataError` command result - nothing is written. Ranges are half-open `[FromDate, ToDate)`, so an event starting exactly when another ends is accepted. The create is not an upsert: a request repeating the `FromDate` of an existing event of the same type is refused instead of updating it, even when the rest of the payload differs (use `PATCH` to change an event).
+
+        Because of this, __the create can be safely retried__: when the client does not know whether an earlier attempt got through, repeating the same request either creates the event or fails with `DataError`, so a duplicate cannot arise.
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
@@ -3887,6 +3902,10 @@ paths:
         schema:
           type: string
           enum: [plannedProduction, plannedShutdown]
+        description: |
+          The type of the event - `plannedProduction` or `plannedShutdown`. The value is matched case-insensitively, so the PascalCase form returned by the reads (`"eventType": "PlannedProduction"`) works as well.
+
+          A numeric value outside the enum is answered with `400 Bad Request`; on `PATCH`, `plannedShutdown` is answered with `400` too, because only shifts can be updated.
       - name: id
         in: path
         required: true
@@ -3967,6 +3986,8 @@ paths:
         Deletes the calendar event.
 
         Required access right: _DataAdmin_.
+
+        __A missing `originGuid` is not reported as `400`.__ A request without it is answered with `405 Method Not Allowed` and the message `The requested resource does not support http method 'DELETE'.`, which is misleading - the method and the path are fine, the query string is not. Check `originGuid` first when a `DELETE` on a calendar event answers `405`.
       parameters:
         - name: originGuid
           in: query
@@ -3974,7 +3995,7 @@ paths:
           schema:
             type: string
             format: uuid
-          description: The current `guid` of the event.
+          description: The current `guid` of the event. Required - when omitted, the request fails with `405`, not `400`.
         - $ref: "#/components/parameters/CommandCustomId"
       responses:
         "202":
@@ -3985,6 +4006,14 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "405":
+          description: The required `originGuid` query parameter is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiMessage"
+              example:
+                Message: The requested resource does not support http method 'DELETE'.
 
   /CalendarOperatorAddCommands:
     post:
