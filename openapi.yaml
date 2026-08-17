@@ -48,16 +48,27 @@ info:
     | `Waiting` / `InProgress` | The command is queued or being processed. |
     | `Success` | The command completed successfully. |
     | `Conflict` | An optimistic concurrency check failed (a stale `ETag` or `OriginGuid` value) - re-read the resource and retry. |
-    | `DataError` | The command data are invalid; the `reason` property describes the problem. |
+    | `DataError` | The command data are invalid or violate a data rule; the `reason` property describes the problem. Some collisions with already existing data end here instead of as `Conflict` - e.g. an overlapping calendar event (see Calendar). |
     | `Failed` | The command processing failed. |
-    | `AlreadyApplied` | The same command was already applied. |
+    | `AlreadyApplied` | The same command was processed more than once and the repeat changed nothing; treat it as a success. A client cannot reach this result by repeating a request - every request creates a new command - so a repeated write is either applied again or rejected, never `AlreadyApplied`. |
+
+    __The HTTP status code of an accepted command says nothing about its outcome.__ A command that finally fails - with `Conflict`, `DataError` or `Failed` - was still accepted with `202 Accepted` and an empty-looking success response. Clients that do not read the polled result cannot tell a rejected write from an applied one. Always poll until a final state and branch on `result`, not on the status code of the command request.
+
+    The `reason` property (generic command results only - the metadocument results do not have it) is a free-form diagnostic message meant for logging and human diagnosis. Its content is not part of the contract, it can change at any time and it may be long raw diagnostic output rather than a sentence - never branch on its text, and do not present it to end users; branch on `result` instead.
 
     There are two families of command results, distinguished by the `location` URL:
 
     * __generic commands__ - the result lives at `api/commandResults/{id}` (see Command Results)
     * __metadocument commands__ - the commands changing metadocuments have their own result resource at `Api/MetadocumentCommandResults/{guid}` (see Metadocuments)
 
-    Every command endpoint accepts an optional `commandCustomId` query parameter - a client-supplied identifier of the command. When the response with the `location` is lost, the result can be looked up with `GET /commandResults?commandCustomId={id}` (or `GET /MetadocumentCommandResults?commandCustomId={id}` for the metadocument commands).
+    __Idempotency with `commandCustomId`.__ Every command endpoint accepts an optional `commandCustomId` query parameter - a client-supplied identifier of the command. It serves two purposes:
+
+    * __Looking the result up__ - when the response with the `location` is lost, the result can be found with `GET /commandResults?commandCustomId={id}` (or `GET /MetadocumentCommandResults?commandCustomId={id}` for the metadocument commands).
+    * __Preventing a duplicate write__ - the same value is carried out only once. A command sent with a `commandCustomId` the same user has already used is answered with `409 Conflict` and __is not executed at all__; the body is a plain-text sentence naming the identifier of the earlier command.
+
+    Together the two make `commandCustomId` a full idempotency key, which is the safest way to repeat a write whose response was lost: send the request again with the same identifier and it either performs the write once (`202`), or answers `409` - and the lookup above then tells how the first attempt ended, including the identifier of the record it created. The repeat never produces a duplicate.
+
+    The values are remembered per user and never expire, so one value is accepted only once for the whole lifetime of the account - generate it per operation (e.g. a GUID), reuse it only when retrying that same operation, and never derive it from business data that could legitimately repeat. There are two independent namespaces: the metadocument commands and all the other commands, so the same value can appear once in each.
 
     __Optimistic concurrency.__ Resources changed by commands carry the identifier of the last applied command - the `eTag` of a metadocument, the `commandGuid` of a measurement, downtime code or task, the `guid` of a calendar event. The update and delete commands take the current value (as `ETag`, `OriginGuid` or `OriginGuids`), and every applied command assigns a new one - so always re-read the resource before a subsequent change. A command with a stale value finishes with the `Conflict` result; some commands detect the conflict already synchronously and respond with `409 Conflict` (noted at the respective operations).
 
@@ -4653,7 +4664,12 @@ components:
       required: false
       schema:
         type: string
-      description: Optional client-supplied identifier of the command. The command result can later be looked up by this identifier - metadocument commands with `GET /MetadocumentCommandResults?commandCustomId={id}`, other commands with `GET /commandResults?commandCustomId={id}`.
+      description: |
+        Optional client-supplied identifier of the command. The command result can later be looked up by this identifier - metadocument commands with `GET /MetadocumentCommandResults?commandCustomId={id}`, other commands with `GET /commandResults?commandCustomId={id}`.
+
+        The value is accepted only once per user: a command sent with an identifier the same user has already used is answered with `409 Conflict` and is not executed. That is what makes a retry safe - after a `409`, the lookup above returns how the first attempt ended. Generate the value per operation (e.g. a GUID), reuse it only when retrying that same operation, and never derive it from business data; the identifiers never expire. See _Idempotency with `commandCustomId`_ in the introduction.
+
+        It identifies the __command__, not the created record - it is a different thing from the `CustomId` property of a metadocument body despite the similar name.
 
   schemas:
     AuthorizationCodeTokenRequest:
@@ -5376,7 +5392,7 @@ components:
           description: The state of the command (see the Command Results group description).
         reason:
           type: [string, "null"]
-          description: The description of the problem when the command failed (e.g. with the `DataError` result).
+          description: The description of the problem when the command failed (e.g. with the `DataError` result). A free-form diagnostic message for logging and human diagnosis - its wording is not part of the contract, so do not parse it and do not display it to end users; branch on `result` instead.
         createdDate:
           type: [string, "null"]
           format: date-time
