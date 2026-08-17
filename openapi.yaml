@@ -268,6 +268,12 @@ tags:
 
       The operations on __comments and production entries__ carry neither a `CustomId` nor an `ETag`, so for those writes `commandCustomId` is the only way to make a retry safe.
 
+      __Identifiers of comments and production entries__
+
+      The `id` of a comment or a production entry is unique within its metadocument, but it is not stable: every update assigns the record a new one. Do not keep these identifiers - re-read the metadocument after each update.
+
+      This also decides how a repeated request behaves. Repeating an __update or a delete__ with the previous `id` ends with `404 Not Found`, because that identifier no longer exists - such a repeat cannot apply twice. Repeating an __add__ is the opposite: nothing identifies the record, so a second request creates a second comment or entry. That is the case where `commandCustomId` is needed.
+
       __Text formatting and mentions__
 
       The `description` of a metadocument and the `text` of the comments are plain strings in the API, but the Portal renders them as __Markdown__ (CommonMark).
@@ -1964,7 +1970,7 @@ paths:
 
         Required access right: _Contributor_; only the author of the comment can update it.
 
-        __Note:__ Updating a comment assigns it a new `id` (the `id` identifies the comment and its version). Re-read the metadocument to get the current `id` before a subsequent update or delete.
+        __Note:__ Updating a comment assigns it a new `id` (the `id` identifies the comment and its version). Re-read the metadocument to get the current `id` before a subsequent update or delete - repeating this request with the previous `id` ends with `404 Not Found`.
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
@@ -2088,7 +2094,7 @@ paths:
 
         Required access right: _Contributor_.
 
-        __Note:__ Updating a production entry assigns it a new `id` (the `id` identifies the entry and its version). Re-read the metadocument to get the current `id` before a subsequent update or delete.
+        __Note:__ Updating a production entry assigns it a new `id` (the `id` identifies the entry and its version). Re-read the metadocument to get the current `id` before a subsequent update or delete - repeating this request with the previous `id` ends with `404 Not Found`.
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
