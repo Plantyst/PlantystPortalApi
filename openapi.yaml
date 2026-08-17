@@ -360,7 +360,7 @@ tags:
 
       __Pauses__
 
-      The shift pauses are expressed as __offsets from the shift start__ in the .NET TimeSpan format `[dd.]hh:mm:ss` - e.g. a pause `{ "from": "04:00:00", "to": "04:15:00" }` of a shift starting at 06:00 UTC runs from 10:00 to 10:15 UTC. The responses use the camelCase form (`{"from": ..., "to": ...}`); the create and update requests use the PascalCase form (`{"From": ..., "To": ...}`).
+      The shift pauses are expressed as __offsets from the shift start__ in the format `[dd.]hh:mm:ss` (the day part is optional) - e.g. a pause `{ "from": "04:00:00", "to": "04:15:00" }` of a shift starting at 06:00 UTC runs from 10:00 to 10:15 UTC. The responses use the camelCase form (`{"from": ..., "to": ...}`); the create and update requests use the PascalCase form (`{"From": ..., "To": ...}`).
 
       Reading the calendar requires the _View_ right; the management operations require the _DataAdmin_ right and follow the asynchronous command pattern (`202 Accepted` + `location`, see Command Results).
   - name: Tasks (Beta)
@@ -837,14 +837,6 @@ paths:
                   type: [integer, "null"]
                   enum: [0, 1]
                   description: "What happens to a downtime running at the end of a shift: `0` Continue, `1` Terminate."
-              # Internal-only payload properties, intentionally not documented
-              # (they require internal Plantyst roles):
-              # * MeasurementType - changing to a type with a different quantity
-              #   type requires the CustomerCare role (403 otherwise); a change
-              #   within the same quantity type counts as "no change" (400)
-              # * TimeZoneId - changing the time zone requires the Administrator
-              #   role (403 otherwise); validated as a Windows time zone id
-              #   convertible to an IANA code
             example:
               MeasurementId: 3
               OriginGuid: 5ad8938c-21dc-4b51-9b2c-3a8bfb2b816d
@@ -1323,21 +1315,6 @@ paths:
         "403":
           description: The user does not have the Owner right of the measurement, the data source is not assigned to it, or the user does not have administrator access to the device.
 
-  # Internal-only endpoints, intentionally not documented (they are bound to
-  # internal Plantyst roles - the CustomerCare role must not be mentioned in
-  # the public documentation):
-  # * POST Api/MeasurementReaggregationCommands - recompute the aggregations of
-  #   a measurement ({MeasurementId, FromDate?, TimeSeriesNames?}; requires the
-  #   Admin right AND the CustomerCare role)
-  # * POST Api/MeasurementDetailReportGenerateCommands - generate the PDF detail
-  #   report ({RequestTime with offset = the time zone of the rendering,
-  #   Queries: [{MeasurementId, From, To, View - e.g. "Base.MinuteSet"}]};
-  #   View right; the controller WAITS for the rendering, so the 202 arrives
-  #   after ~10 s and the command result is already Success with an extra
-  #   `downloadUrl` field ("/Report/{date}-{guid}.pdf?ticks=..."); the download
-  #   is an MVC route accepting only the Portal cookie session - an API key or
-  #   a bearer token gets the login page, which makes it of little use to pure
-  #   API clients; verified live 2026-07-12)
 
   /MeasurementTimeSeriesAggregationsQuery:
     post:
@@ -1639,22 +1616,6 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
-  # Internal-only endpoints, intentionally not documented (in preparation, not
-  # yet public; the contract may still change):
-  # * POST Api/MeasurementMetricQuotasQuery - query of quarterly metric quotas
-  #   (Queries[{MeasurementId, From, To, MetricName}] -> results[{query, result:{totalQuota}}];
-  #   totalQuota is pro-rated to the queried range)
-  # * POST Api/MeasurementMetricQuotas - set a quarterly quota (Admin right;
-  #   {MeasurementId, From = quarter start in the measurement time zone, TimeSpan: "q",
-  #   MetricName, Value}; 201 with empty body for both create and update;
-  #   Value null zeroes the quota but does not remove the record)
-  # * POST Api/TargetObjectiveAddCommands / TargetObjectiveUpdateCommands /
-  #   TargetObjectiveArchiveCommands / TargetObjectiveDeleteCommands - management
-  #   of the KPI target objectives; Add: {Metric, Title, Scope: {Id}, Periods:
-  #   [{ValidFrom, Period, Rules: [{Criterion (Span), Color, Priority}]}]},
-  #   Update takes TargetObjectiveId + the same shape, Archive/Delete take
-  #   {TargetObjectiveId}; the feature is still heavily in progress - keep
-  #   internal until it stabilizes
 
   # ---------------------------------------------------------------------------
   # Metadocuments
@@ -2382,7 +2343,7 @@ paths:
 
         Reading the `appliedChanges` patches:
 
-        * the property paths use the PascalCase names of the internal model (e.g. `/To`, `/Comments/0`) - the same convention as the `appliedChanges` of the webhook events (see Webhooks)
+        * the property paths use PascalCase property names (e.g. `/To`, `/Comments/0`) - the same convention as the `appliedChanges` of the webhook events (see Webhooks)
         * a created metadocument appears as a `replace` of the root path `/` with the full document as the value
         * a deleted metadocument appears as a `replace` of the root path `/` with a `null` value
 
@@ -2678,20 +2639,6 @@ paths:
         "404":
           description: The metadocument does not exist.
 
-  # Internal-only endpoints, intentionally not documented (the multiple
-  # instances of jobs are for internal use for now):
-  # * POST Api/MetadocumentLinkAddCommands - create a job metadocument linked to
-  #   a multiple instance ({Metadocument: <same as POST /Metadocuments>, Link:
-  #   {LinkId, LinkType: MultipleInstance|ProductionEntries|Changeover,
-  #   Configuration?}}; 202 HAL {location, _links.metadocumentLink + _links.
-  #   metadocument} = three command results)
-  # * POST Api/MetadocumentCompleteCommands - complete a running instance
-  #   ({MetadocumentGuid, CompletedDate, OriginGuid = the current commandGuid of
-  #   the instance, ETag?}; sets the metadocument `to` and marks the instance
-  #   completed; 400 when the link/instance is missing, already completed, or
-  #   the OriginGuid is stale)
-  # * POST Api/MultipleInstances - query the instance states (body = JSON array
-  #   of multipleInstanceId values; returns {id, completedDate?, commandGuid})
 
   /ProductionEntriesImportCommands:
     post:
@@ -4658,7 +4605,7 @@ paths:
         "404":
           description: The group does not exist in the directory.
         "409":
-          description: The group cannot be deleted - it has child groups (only leaf groups can be deleted; verified), or it represents the subscription or the directory.
+          description: The group cannot be deleted - it has child groups (only leaf groups can be deleted), or it represents the subscription or the directory.
 
 webhooks:
   metadocumentEvent:
@@ -4956,11 +4903,6 @@ components:
               items:
                 $ref: "#/components/schemas/Measurement"
 
-    # Internal-only measurement properties, intentionally not documented
-    # (returned by the API, but intended for the Portal frontend; third
-    # parties should ignore them):
-    # * shiftEndDowntimeAction - what happens to a downtime running at the end of a shift (Continue/Terminate/Split)
-    # * isHierarchicalLocationHiddenInTitle - whether the hierarchical location prefix is hidden in the title
     Measurement:
       type: object
       properties:
@@ -5092,14 +5034,6 @@ components:
           type: [integer, "null"]
           description: The user who locked the property.
 
-    # Internal-only metadocument response properties, intentionally not documented
-    # (returned by the API, but intended for the Portal frontend and internal
-    # integrations; third parties should ignore them):
-    # * eventSource, eventSourceId - identification of the external event that created the metadocument
-    # * fromTimeAdjustment, toTimeAdjustment - automatic time adjustment rules ({rule, maximalShift, ruleTimeThreshold, isResolved})
-    # * task - link to the related task entry ({id, initialTitle})
-    # * links - internal links to external data sources ({id, linkType, prefetchJson}); when a
-    #   ProductionEntries link exists, direct production entry modifications return 405
     Metadocument:
       type: object
       description: A metadocument returned by the API. Properties with `null` values are omitted in HAL responses.
@@ -5215,15 +5149,6 @@ components:
               items:
                 $ref: "#/components/schemas/UserSummary"
 
-    # Internal-only create/update properties, intentionally not documented:
-    # * EventSource, EventSourceId - identification of the source event (used by internal integrations)
-    # * ReadOnly, Locks - read-only flag and property locks (managed by the Portal frontend)
-    # * FromTimeAdjustment, ToTimeAdjustment - automatic time adjustment rules
-    # * MetadocumentType - obsolete alias of Type
-    # * DowntimeCode - writable alias of DowntimeCodeKey (both map to the same entity field);
-    #   only DowntimeCodeKey is documented; the intended target state is that DowntimeCode
-    #   becomes a read-only property resolved from the downtime code dictionary
-    #   (improvement tracked in DOPORUCENI-API.md)
     MetadocumentCreate:
       type: object
       required: [MeasurementId, Type, From]
@@ -5314,7 +5239,6 @@ components:
           items:
             $ref: "#/components/schemas/Tool"
 
-    # Internal-only create/update properties: see the comment above MetadocumentCreate.
     MetadocumentUpdate:
       type: object
       description: Only the properties present in the payload are changed.
@@ -5499,10 +5423,6 @@ components:
           $ref: "#/components/schemas/HalLinks"
 
 
-    # Internal-only downtime code properties, intentionally not documented
-    # (returned by the API, but intended for the Portal frontend):
-    # * severity - Undefined/Minor/Major/Critical classification of the cause
-    # * order - the position of the code in the list offered to operators
     DowntimeCode:
       type: object
       description: A downtime code from the dictionary. Properties with `null` values are omitted in HAL responses.
@@ -5552,8 +5472,6 @@ components:
         _links:
           $ref: "#/components/schemas/HalLinks"
 
-    # Internal-only write properties (accepted, but intended for the Portal
-    # frontend): Severity, Order - see the comment above DowntimeCode.
     DowntimeCodeWrite:
       type: object
       required: [Code, Title]
@@ -5737,9 +5655,6 @@ components:
         note:
           type: [string, "null"]
 
-    # Internal-only properties observed in webhook payloads, intentionally not
-    # documented: maximalLength (seconds, derived from the downtime code),
-    # nextCommentId, nextProductionEntryId (internal counters).
     WebhookMetadocument:
       type: object
       description: The metadocument carried by the webhook. All metadocument properties (see the Metadocuments group) are present in camelCase; properties with `null` or empty values are omitted. Unlike the REST representation, the related records are inlined (no `_links`/`_embedded`).
@@ -5823,8 +5738,6 @@ components:
           description: "A JSON Patch (RFC 6902) document (as a string) describing the changes applied by the command. The paths use PascalCase property names (e.g. `/To`, `/DowntimeCode`, `/Comments/0`), unlike the camelCase payload. Special shapes: a create event carries a single `replace` of the path `/` with the whole document, a delete event a `replace` of `/` with `null`."
 
 
-    # Internal-only property of /Users/Me, intentionally not documented:
-    # * features - UI feature toggles of the user ({title, configuration, enabledUntil})
     UserProfile:
       type: object
       description: The full profile of the token owner.
@@ -5841,8 +5754,6 @@ components:
         _links:
           $ref: "#/components/schemas/HalLinks"
 
-    # Internal-only property, intentionally not documented:
-    # * features - enabled subscription modules ({title, configuration, enabledUntil})
     Subscription:
       type: object
       properties:
