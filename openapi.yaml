@@ -232,11 +232,41 @@ tags:
 
       __Optimistic concurrency__
 
-      Every metadocument carries an `eTag`. The update and delete operations accept an optional ETag value; when it is provided and the metadocument has been modified in the meantime, the command finishes with the `Conflict` result.
+      Every metadocument carries an `eTag`. The update and delete operations accept an optional ETag value; when it is provided and the metadocument has been modified in the meantime, the command finishes with the `Conflict` result and the metadocument stays unchanged.
+
+      __The rejection is asynchronous and invisible in the HTTP status code__ - a stale ETag is still answered with `202 Accepted`, and only the polled command result carries `Conflict`. A client that does not read the result cannot distinguish a rejected update from an applied one.
+
+      __Omitting the ETag does not turn the check off.__ The ETag is optional only in the sense that it need not be sent - the write does not become unconditional. An update or delete without one is applied as "last read wins": against the state the metadocument has at the moment the request is handled, and it finishes with `Conflict` when another writer gets there first. Concurrent updates are therefore resolved the same way whether the ETag is sent or not - exactly one of them succeeds and the rest end with `Conflict`. Omitting the ETag to "just overwrite" gains nothing and the client has to handle `Conflict` all the same; the API offers no way to force an unconditional write.
+
+      __Create idempotency and `CustomId`__
+
+      `CustomId` is the client's own identifier of a metadocument, unique per (`CustomId`, `MeasurementId`) unless the create is sent with `allowMultiple=true`. A repeated create with a `CustomId` that already exists on the measurement is rejected __synchronously__ with `409 Conflict` - nothing is created and there is no command result to poll; the response body carries the URL of the existing metadocument (`{"Resource": "Api/Metadocuments/{guid}"}`).
+
+      This makes a create with a `CustomId` safe to retry: when the client does not know whether an earlier attempt got through, repeating it either creates the metadocument (`202`) or returns `409` with the link to the record the earlier attempt created. Assigning a `CustomId` is therefore the recommended way to make metadocument creation idempotent.
+
+      Two limits of the check are worth knowing: deleted metadocuments are ignored, so a `CustomId` becomes free again once its metadocument is deleted; and the check runs __only on create__ - `PATCH` can set a `CustomId` that another metadocument of the measurement already uses, and the API does not prevent it.
 
       __Command custom identifier__
 
-      Every command operation accepts an optional `commandCustomId` query parameter - a client-supplied identifier of the command. The command result can later be looked up with `GET /MetadocumentCommandResults?commandCustomId={id}` (useful when the response with the command location was lost).
+      Every command operation accepts an optional `commandCustomId` query parameter - a client-supplied identifier of the command. The command result can later be looked up with `GET /MetadocumentCommandResults?commandCustomId={id}` (useful when the response with the command location was lost), and a repeated value is refused with `409 Conflict` without executing the command - see _Idempotency with `commandCustomId`_ in the introduction. The metadocument commands have their own namespace of these identifiers, separate from the rest of the API.
+
+      __`commandCustomId` and `CustomId` are two different things despite the similar names.__ This is the most easily confused pair in the API, and the cleanest way to tell them apart is by the question each one answers: `CustomId` answers _"does this record already exist on this measurement?"_, `commandCustomId` answers _"have I already performed this operation?"_. Everything else follows from that:
+
+      | | `CustomId` | `commandCustomId` |
+      |---|---|---|
+      | Where | property of the metadocument body | query parameter |
+      | Identifies | the record | one write operation |
+      | Unique within | one measurement | one user, across all metadocument commands |
+      | A repeat is answered with | `409` + JSON with the link to the existing metadocument | `409` + a plain-text sentence about the earlier command |
+      | The outcome of the first attempt is then read from | the `409` body itself | `GET /MetadocumentCommandResults?commandCustomId={id}` - the whole result, including `metadocumentGuid` |
+      | Can the value be used again | __yes__ - deleting the metadocument frees it | __no__ - never |
+      | May be derived from the content of the record | __yes__ | __no__ |
+
+      In both cases the `409` is not a dead end but the second half of a retry: it says "this has already been done" and leads to the outcome of the first attempt. A client that lost the original response can therefore always find out whether its write went through and what it created.
+
+      The last two rows belong together. A `CustomId` derived from the content of the record is safe - when the record is deleted, the value is free again. The same value used as a `commandCustomId` would be spent by the first successful write and that record could never be created again, not even after deleting it. Generate `commandCustomId` values per operation (e.g. a GUID) and reuse a value only when retrying that same operation.
+
+      The operations on __comments and production entries__ carry neither a `CustomId` nor an `ETag`, so for those writes `commandCustomId` is the only way to make a retry safe.
 
       __Text formatting and mentions__
 
@@ -1677,6 +1707,8 @@ paths:
         Required access right: _Contributor_.
 
         The optional `Text` property creates the first comment of the metadocument in the same command (with `CommentTime` as its time, when provided).
+
+        __Idempotent create with `CustomId`.__ When the payload carries a `CustomId` that already exists on the measurement, the create is rejected synchronously with `409 Conflict` and the body points to the existing metadocument - nothing is created and there is no command result to poll. Repeating a create with the same `CustomId` is therefore safe: the result is either `202` (created) or `409` with the link to the record the earlier attempt created. Set `allowMultiple=true` to bypass the uniqueness check. Note that `CustomId` (the identity of the record) is unrelated to the `commandCustomId` query parameter (a handle for looking up the command result) - see the group description.
       parameters:
         - name: tryMergeWithExisting
           in: query
@@ -1737,6 +1769,28 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          description: |
+            The create was refused straight away - nothing was created and there is no command result to poll. Two causes, distinguished by the response body:
+
+            * __A metadocument with the given `CustomId` already exists__ on the measurement (and `allowMultiple` is not set) - the JSON body carries `Resource`, the relative URL of the __existing__ metadocument, so a client retrying a create it is unsure about learns where its earlier attempt was stored.
+            * __The `commandCustomId` has already been used__ by this user - the body is a plain-text sentence naming the identifier of the earlier __command__ (not of a metadocument), see _Idempotency with `commandCustomId`_ in the introduction.
+
+            The two causes do not share a body format - the first is `application/json`, the second `text/plain` - so do not assume the body of a `409` is parsable JSON; check the content type first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Resource:
+                    type: string
+                    description: The relative URL of the existing metadocument with the same `CustomId`.
+              example:
+                Resource: Api/Metadocuments/a77eab6f-3d5a-4c1e-9f10-2b6c0d84e5c1
+            text/plain:
+              schema:
+                type: string
+              example: Command with the given command custom id already exists (b2ec82f2-1438-47cd-a982-6b2e3b0476c7)
 
   /Metadocuments/{guid}:
     parameters:
@@ -1824,7 +1878,11 @@ paths:
 
         Required access right: _Contributor_ (see the group description for `readOnly` and `locks` restrictions).
 
-        The optional `ETag` property enables the optimistic concurrency check: when the metadocument has been modified in the meantime, the command finishes with the `Conflict` result. The server responds with `400 Bad Request` when the patch does not change anything or would leave the metadocument without content.
+        The optional `ETag` property enables the optimistic concurrency check: when the metadocument has been modified in the meantime, the command finishes with the `Conflict` result and the metadocument stays unchanged. The server responds with `400 Bad Request` when the patch does not change anything or would leave the metadocument without content.
+
+        __A stale `ETag` is not reported by the HTTP status code__ - the request is answered with `202 Accepted` exactly like an accepted update, and only the polled command result distinguishes `Success` from `Conflict`. Poll the result before treating the update as applied.
+
+        Omitting `ETag` does not disable the check and does not make the patch unconditional - it is applied as "last read wins" and can still end with `Conflict` (see the group description).
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
@@ -1856,13 +1914,15 @@ paths:
         Deletes the metadocument with the specified GUID.
 
         Required access right: _Contributor_ (see the group description for `readOnly` and `locks` restrictions).
+
+        The optional `etag` parameter behaves exactly like the `ETag` of `PATCH`: a stale value is still answered with `202 Accepted` and only the polled command result carries `Conflict`, with the metadocument left in place - so poll the result before treating the metadocument as deleted. Omitting `etag` does not make the delete unconditional (see the group description).
       parameters:
         - name: etag
           in: query
           required: false
           schema:
             type: string
-          description: Optional ETag of the metadocument for the optimistic concurrency check.
+          description: Optional ETag of the metadocument for the optimistic concurrency check. Omitting it does not make the delete unconditional - it still runs as "last read wins" and can finish with the `Conflict` result (see the group description).
         - $ref: "#/components/parameters/CommandCustomId"
       responses:
         "202":
@@ -5160,7 +5220,12 @@ components:
           description: Extended description; supports the Markdown markup language.
         CustomId:
           type: string
-          description: User-defined identifier. By default, at most one metadocument with the given `CustomId` per measurement is allowed (see the `allowMultiple` parameter).
+          description: |
+            User-defined identifier of the metadocument. By default, at most one metadocument with the given `CustomId` per measurement is allowed (see the `allowMultiple` parameter) - a create with an already used value is rejected synchronously with `409 Conflict` carrying the URL of the existing metadocument, which makes the create safe to retry.
+
+            The uniqueness is tied to the __existence of the metadocument__, not to the value: deleting the metadocument frees its `CustomId`, and the same value can be used again. An identifier derived from the content of the record is therefore safe - a user who deletes a downtime and records the identical one again gets through.
+
+            Not to be confused with the `commandCustomId` query parameter, which identifies one write operation, is never freed and therefore must not be derived from the content of the record (see the group description).
         Text:
           type: string
           maxLength: 500
