@@ -122,6 +122,12 @@ info:
     4. Skip the echoes of your own changes: compare the `commandGuid` of the event with the command identifiers of your own API calls (the last segment of the `location` URL returned by a command).
     5. When the handler needs more data, call the API back with the token from `authorization.value` of the envelope.
 
+    __Embedding a Portal screen in your own application__
+
+    1. Request an access device - contact [support@plantyst.com](mailto:support@plantyst.com) and receive its access key (see Embedded Views).
+    2. Assign the user who should be shown - `POST /AccessDevices` with `{"AccessKey": "..."}`, called with that user's credential.
+    3. Display the screen with that access key in its URL, and reload it whenever you repeat step 2 for another user.
+
     ## Compatibility
 
     The API is not versioned. Backward compatible extensions - new properties in responses, new endpoints - may appear at any time, so clients must ignore unknown properties. The groups marked __Beta__ may still change in incompatible ways - do not build critical flows on them.
@@ -448,6 +454,34 @@ tags:
       __What changed__
 
       The `appliedChanges` property carries a JSON Patch (RFC 6902) document describing the changes applied by the command - useful for reacting only to specific properties (e.g. a path `/DowntimeCode` means the downtime code changed). Note that the patch paths use PascalCase property names, unlike the camelCase payload.
+
+  - name: Embedded Views
+    description: |
+      A Portal screen can be displayed inside a customer application, signed in as a chosen Plantyst user - the user does not log in and never sees a Plantyst login screen. It is meant for shop-floor terminals and internal dashboards that should show live production data next to the customer's own content.
+
+      __Access devices and access keys__
+
+      An __access device__ represents one embedding slot - typically one terminal, or one place in the customer application. It is identified by an __access key__, a GUID that the embedded screen carries in its URL:
+
+      ```
+      https://portal.plantyst.com/Online?AccessKey={accessKey}
+      ```
+
+      Exactly one Plantyst user is assigned to an access device at a time, and the embedded screen runs with that user's identity and access rights: it shows the measurements the user may see and any record it creates is attributed to the user. The endpoints in this group are how that assignment is read and changed.
+
+      Access devices are created on request at [support@plantyst.com](mailto:support@plantyst.com) - state how many devices you need and what each of them is for; you receive their access keys. There is currently no self-service management API.
+
+      Note that the screen itself is a web page rather than a REST resource, so its URL and its display options are not part of this API reference.
+
+      __Switching the user__
+
+      `POST /AccessDevices` assigns __the calling user__ to the access device and replaces the previous assignment. The credential the request is made with therefore decides who is shown: to display a different user, call the endpoint with that user's credential (for several users, obtain their tokens through the OAuth2 authorization code flow - see Authorization).
+
+      A screen that is already open keeps running as the previously assigned user - the change does not reach it on its own, so reload it once the call succeeds. Users can also be switched by presenting an RFID card to a reader connected to the access device; such a reader refreshes the open screens by itself. That setup is arranged at [support@plantyst.com](mailto:support@plantyst.com).
+
+      __Security__
+
+      The access key is a credential: anyone who has it sees the data of the assigned user. Keep it on your server, render it only into pages that are already restricted to the right people, and be aware that it travels in a URL - it ends up in the browser history and in `Referer` headers.
 
   - name: Command Results
     description: |
@@ -4613,6 +4647,82 @@ paths:
         "409":
           description: The group cannot be deleted - it has child groups (only leaf groups can be deleted), or it represents the subscription or the directory.
 
+  # ---------------------------------------------------------------------------
+  # Embedded Views
+  # ---------------------------------------------------------------------------
+  /AccessDevices:
+    get:
+      operationId: getAccessDevices
+      tags: [Embedded Views]
+      summary: Get access devices
+      description: |
+        Gets the access devices the authenticated user is currently assigned to. Use it to check which embedding slots the user occupies, for example to confirm that a switch has been applied.
+      responses:
+        "200":
+          description: The access devices of the authenticated user.
+          content:
+            application/hal+json:
+              schema:
+                type: object
+                properties:
+                  _links:
+                    $ref: "#/components/schemas/HalLinks"
+                  _embedded:
+                    type: object
+                    properties:
+                      accessDevice:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AccessDevice"
+              example:
+                _links:
+                  self:
+                    href: /Api/AccessDevices
+                _embedded:
+                  accessDevice:
+                    - accessDeviceId: 11
+                      accessKey: a4fc8b47-e618-4098-a1cc-35508afe281c
+                      _links:
+                        self:
+                          href: /Api/AccessDevices/11
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: assignAccessDevice
+      tags: [Embedded Views]
+      summary: Assign the current user to an access device
+      description: |
+        Assigns the authenticated user to the access device identified by the access key and removes the previous assignment. The operation is synchronous.
+
+        The assignment is always made for the user of the credential the request is made with - there is no way to assign somebody else. A screen that is already open with this access key is not notified of the change and keeps running as the previously assigned user, so reload it after a successful call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [AccessKey]
+              properties:
+                AccessKey:
+                  type: string
+                  format: uuid
+                  description: The access key of the access device to assign the user to.
+            example:
+              AccessKey: a4fc8b47-e618-4098-a1cc-35508afe281c
+      responses:
+        "204":
+          description: The user was assigned to the access device.
+        "400":
+          description: No access device with the given access key exists - the response body carries the reason. A missing request body yields the same status code with an empty body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiMessage"
+              example:
+                Message: Access device with given access key does not exist.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
 webhooks:
   metadocumentEvent:
     post:
@@ -4942,6 +5052,19 @@ components:
           items:
             type: string
             enum: [View, Contributor, DataAdmin, Admin, Owner]
+        _links:
+          $ref: "#/components/schemas/HalLinks"
+
+    AccessDevice:
+      type: object
+      description: An access device - one slot for embedding a Portal screen into a customer application.
+      properties:
+        accessDeviceId:
+          type: integer
+        accessKey:
+          type: string
+          format: uuid
+          description: The key the embedded screen carries in its URL. Treat it as a credential.
         _links:
           $ref: "#/components/schemas/HalLinks"
 
