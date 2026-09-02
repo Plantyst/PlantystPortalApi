@@ -240,7 +240,7 @@ tags:
 
       Every metadocument carries an `eTag`. The update and delete operations accept an optional ETag value; when it is provided and the metadocument has been modified in the meantime, the command finishes with the `Conflict` result and the metadocument stays unchanged.
 
-      __The rejection is asynchronous and invisible in the HTTP status code__ - a stale ETag is still answered with `202 Accepted`, and only the polled command result carries `Conflict`. A client that does not read the result cannot distinguish a rejected update from an applied one.
+      __The rejection is asynchronous and invisible in the HTTP status code__ - a stale ETag is still answered with `202 Accepted`, and only the polled command result carries `Conflict`. A client that does not read the result cannot distinguish a rejected update from an applied one. Any value that does not match the current one behaves the same way, a malformed one included: it is never answered with `400 Bad Request`, only with the `Conflict` result.
 
       __Omitting the ETag does not turn the check off.__ The ETag is optional only in the sense that it need not be sent - the write does not become unconditional. An update or delete without one is applied as "last read wins": against the state the metadocument has at the moment the request is handled, and it finishes with `Conflict` when another writer gets there first. Concurrent updates are therefore resolved the same way whether the ETag is sent or not - exactly one of them succeeds and the rest end with `Conflict`. Omitting the ETag to "just overwrite" gains nothing and the client has to handle `Conflict` all the same; the API offers no way to force an unconditional write.
 
@@ -285,6 +285,35 @@ tags:
       The `description` of a metadocument and the `text` of the comments are plain strings in the API, but the Portal renders them as __Markdown__ (CommonMark).
 
       A comment can additionally __mention a user or a team__ with a Markdown link that has a special target: `[Jan Novák](#userId:92)` mentions a user, `[Plantyst Team](#teamId:1)` mentions a team and expands to all its members. The link text is the displayed label; the target must keep the exact `#userId:{id}` / `#teamId:{id}` format (the user identifiers are the ones returned by `/Users` and in `_embedded.user`). The server processes the mentions asynchronously and notifies the mentioned users; only users with access to the measurement are notified.
+
+      __Production coefficient__
+
+      A job can carry a production coefficient - the number of produced pieces one measured pulse represents. It is expressed as a fraction by two pairs of properties: `MaximumProductionCoefficient` with `MaximumProductionCoefficientDenominator`, and `CurrentProductionCoefficient` with `CurrentProductionCoefficientDenominator`. An omitted or `null` denominator means `1`, so `MaximumProductionCoefficient: 4` alone is the coefficient 4 and `10` with the denominator `5` is the coefficient 2. The _maximum_ pair is the highest coefficient the job may reach, the _current_ pair the one in effect.
+
+      The four properties are validated together as one value, both on create and on update, and the whole group must satisfy these rules:
+
+      * either all four are empty, or __both numerators are filled__ - a job cannot have only a maximum or only a current coefficient. Setting the coefficient on a job that has none therefore means sending both numerators in one request; each of them alone is rejected.
+      * every value present must be __greater than zero__ - this holds for the numerators and the denominators alike.
+      * the current coefficient must not exceed the maximum one, __compared as fractions__: `CurrentProductionCoefficient / CurrentProductionCoefficientDenominator` must be less than or equal to `MaximumProductionCoefficient / MaximumProductionCoefficientDenominator`. A change of a single denominator can break this rule even though the numerators stay untouched.
+
+      The values need not be whole numbers; both the numerators and the denominators accept decimals. __The denominator is there for coefficients that have no exact decimal form__ - two pieces per three pulses is given exactly as the numerator `2` with the denominator `3`, which no decimal number can express. A coefficient that does have a finite decimal form needs no denominator: `2.5` is sent as the numerator alone.
+
+      The pair is stored as it arrives. The API neither reduces the fraction nor collapses it into a single number, and reads both properties back the way they were sent - `2` with `3` stays `2` and `3`, never `0.667`.
+
+      Which form is chosen matters at the boundary of the maximum, because the current and the maximum coefficient are compared as the numbers the fractions evaluate to. A decimal written in place of a fraction is only an approximation of it and can land just above the maximum, so a current coefficient of `0.6666666666666667` against the maximum `2/3` is refused. Give both coefficients in the same form whenever they are meant to be equal.
+
+      On update the rules are evaluated against the __resulting__ state, not against the payload: a property the payload does not mention keeps its current value and enters the check with it. That is what makes it possible to change one property of the group at a time once the coefficient is set - and what makes such a change fail when the result would violate the rules. A request that breaks any of them is rejected synchronously with `400 Bad Request`, and the metadocument stays unchanged.
+
+      To remove the coefficient, send all four properties as `null` in one `PATCH`; clearing only a part of the group is refused by the first rule.
+
+      __Clearing a property with `null`__
+
+      `PATCH` changes only the properties present in the payload. Sending a property with the value `null` is how its value is __removed__ - it is not the same as omitting the property, which leaves the value as it is. This works for the properties of every type: numbers (`Setpoint`, `TargetAmount`, `PlannedDuration`, the production coefficients), strings (`Description`, `WorkOrderNumber`, `Color`, `CustomId`), dates (`To`, `PlannedFrom`, `PlannedTo`), the `CustomFields` object and the `Operations` and `Tools` arrays. The arrays are the one place where the result is not `null`: a cleared array is read back as an empty array, and clearing one that is already empty changes nothing and is therefore refused with `400 Bad Request`.
+
+      Two properties cannot be cleared this way:
+
+      * __`From`__ - a payload that sets it to `null` is rejected with `400 Bad Request`. Every metadocument has a start; only the end (`To`) may be open.
+      * __`Title`__ - it can be cleared only while something else carries the content of the metadocument. A metadocument counts as having content when it is a downtime, or has a title, a setpoint, at least one tool, or at least one comment or production entry. A payload that would leave a metadocument with none of these is refused with `400 Bad Request` - which on a job whose only content is the title means `Title` cannot be removed until one of the others is set.
 
       __Change history__
 
@@ -340,7 +369,7 @@ tags:
       * `AvailableTools` and `Operations` may contain multiple values separated by a pipe (`|`)
       * `PlannedFrom`/`PlannedTo` are dates; the recommended format is UTC ISO 8601, e.g. `2026-07-02T06:50:00Z`
       * custom fields: any column prefixed `Custom.` (e.g. `Custom.PartNumber`) is imported into the `customFields` of the planned job
-      * numeric validations: `Setpoint`, `TargetAmount`, `MaximumProductionCoefficient` and its denominator must be greater than zero when provided
+      * numeric validations: `Setpoint`, `TargetAmount`, `MaximumProductionCoefficient` and its denominator must be greater than zero when provided; the coefficient and its denominator form a fraction the same way as on a metadocument (see _Production coefficient_ in the Metadocuments group)
       * limits: at most 10 000 rows per measurement and 500 000 rows per file
       * `MeasurementId` determines the measurement of each row. __When the column is missing or empty in all rows, the same imported list is applied to every measurement where the user has the DataAdmin right__ - always provide the column unless this is really intended.
 
@@ -1890,7 +1919,9 @@ paths:
 
         Required access right: _Contributor_ (see the group description for `readOnly` and `locks` restrictions).
 
-        The optional `ETag` property enables the optimistic concurrency check: when the metadocument has been modified in the meantime, the command finishes with the `Conflict` result and the metadocument stays unchanged. The server responds with `400 Bad Request` when the patch does not change anything or would leave the metadocument without content.
+        A property is removed by sending it as `null`; omitting it leaves its value unchanged (see _Clearing a property with `null`_ in the group description).
+
+        The optional `ETag` property enables the optimistic concurrency check: when the metadocument has been modified in the meantime, the command finishes with the `Conflict` result and the metadocument stays unchanged. The server responds with `400 Bad Request` when the patch does not change anything or would leave the metadocument without content. The "does not change anything" rule is evaluated over the payload as a whole: the request is accepted as soon as one property differs from its current value, and properties sent with the value they already have do not make it fail.
 
         __A stale `ETag` is not reported by the HTTP status code__ - the request is answered with `202 Accepted` exactly like an accepted update, and only the polled command result distinguishes `Success` from `Conflict`. Poll the result before treating the update as applied.
 
@@ -5236,12 +5267,16 @@ components:
           description: The target production amount of the job.
         maximumProductionCoefficient:
           type: number
+          description: The numerator of the highest production coefficient the job may reach (see the group description).
         currentProductionCoefficient:
           type: number
+          description: The numerator of the production coefficient in effect.
         maximumProductionCoefficientDenominator:
           type: number
+          description: The denominator of the maximum production coefficient; when absent, the coefficient is the numerator itself.
         currentProductionCoefficientDenominator:
           type: number
+          description: The denominator of the current production coefficient; when absent, the coefficient is the numerator itself.
         customFields:
           type: object
           additionalProperties: true
@@ -5350,12 +5385,16 @@ components:
           description: The target production amount of the job.
         MaximumProductionCoefficient:
           type: number
+          description: The numerator of the highest production coefficient the job may reach. The four coefficient properties are validated together - see _Production coefficient_ in the group description.
         CurrentProductionCoefficient:
           type: number
+          description: The numerator of the production coefficient in effect. Must be filled whenever `MaximumProductionCoefficient` is.
         MaximumProductionCoefficientDenominator:
           type: number
+          description: The denominator of the maximum production coefficient; when omitted, the coefficient is the numerator itself.
         CurrentProductionCoefficientDenominator:
           type: number
+          description: The denominator of the current production coefficient; when omitted, the coefficient is the numerator itself.
         CustomFields:
           type: object
           additionalProperties: true
@@ -5376,61 +5415,69 @@ components:
           type: string
           description: The concurrency stamp for the optimistic concurrency check; when the metadocument has been modified in the meantime, the command finishes with the `Conflict` result.
         Title:
-          type: string
+          type: [string, "null"]
+          description: Can be set to `null` only while another property carries the content of the metadocument - see _Clearing a property with `null`_ in the group description.
         From:
           type: string
           format: date-time
+          description: Cannot be set to `null`; a metadocument always has a start.
         To:
           type: [string, "null"]
           format: date-time
           description: Set to `null` for an unlimited (still running) metadocument.
         Description:
-          type: string
+          type: [string, "null"]
           description: Extended description; supports the Markdown markup language.
         CustomId:
-          type: string
+          type: [string, "null"]
         Color:
-          type: string
-          description: Color in the hex color code.
+          type: [string, "null"]
+          description: Color in the hex color code. The value is normalized, so it is read back in upper case.
         Setpoint:
-          type: number
+          type: [number, "null"]
         Operations:
-          type: array
+          type: [array, "null"]
           items:
             type: string
+          description: Set to `null` to clear; the property is then read back as an empty array.
         DowntimeCodeKey:
-          type: string
+          type: [string, "null"]
           description: The key of the downtime code to assign (see the downtime code dictionary). For downtimes, set only this property and leave `Title` empty.
         WorkOrderNumber:
-          type: string
+          type: [string, "null"]
         PlannedFrom:
-          type: string
+          type: [string, "null"]
           format: date-time
         PlannedTo:
-          type: string
+          type: [string, "null"]
           format: date-time
         PlannedDuration:
-          type: number
+          type: [number, "null"]
           description: The planned duration, in seconds.
         TargetAmount:
-          type: number
+          type: [number, "null"]
         MaximumProductionCoefficient:
-          type: number
+          type: [number, "null"]
+          description: The numerator of the highest production coefficient the job may reach. The four coefficient properties are validated together against the resulting state of the metadocument; send all four as `null` to remove the coefficient - see _Production coefficient_ in the group description.
         CurrentProductionCoefficient:
-          type: number
+          type: [number, "null"]
+          description: The numerator of the production coefficient in effect. Must end up filled whenever `MaximumProductionCoefficient` is, and must not exceed the maximum coefficient when both are compared as fractions.
         MaximumProductionCoefficientDenominator:
-          type: number
+          type: [number, "null"]
+          description: The denominator of the maximum production coefficient; when `null`, the coefficient is the numerator itself.
         CurrentProductionCoefficientDenominator:
-          type: number
+          type: [number, "null"]
+          description: The denominator of the current production coefficient; when `null`, the coefficient is the numerator itself.
         CustomFields:
-          type: object
+          type: [object, "null"]
           additionalProperties: true
         AutomaticTermination:
-          type: boolean
+          type: [boolean, "null"]
         Tools:
-          type: array
+          type: [array, "null"]
           items:
             $ref: "#/components/schemas/Tool"
+          description: Set to `null` to clear; the property is then read back as an empty array.
 
     MetadocumentCommandResult:
       type: object
@@ -5485,8 +5532,10 @@ components:
           enum: [Available, Running, Paused, Finished]
         maximumProductionCoefficient:
           type: [number, "null"]
+          description: The numerator of the highest production coefficient the job may reach (see _Production coefficient_ in the Metadocuments group).
         maximumProductionCoefficientDenominator:
           type: [number, "null"]
+          description: The denominator of the maximum production coefficient; when absent, the coefficient is the numerator itself.
         order:
           type: [integer, "null"]
           description: The position of the planned job in the job plan (the order of rows in the imported file).
