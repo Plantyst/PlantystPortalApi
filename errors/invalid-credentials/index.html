@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Invalid credentials - Plantyst Portal API</title>
+  <meta name="description" content="An API key or HTTP Basic credentials were presented and rejected.">
+  <meta name="theme-color" content="#1eb7ec">
+  <link rel="icon" type="image/png" sizes="32x32" href="../../assets/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="../../assets/favicon-192x192.png">
+  <link rel="apple-touch-icon" href="../../assets/favicon-192x192.png">
+  <style>
+    :root {
+      --navy:#2d3e50; --text:#2d3e50; --muted:#6c717f; --faint:#8e96a9;
+      --accent:#0f7ba3; --bg:#ffffff; --bg2:#f5f8fa; --bg3:#e7edf1;
+      --border:rgba(45,62,80,.12); --code:#14202b; --codebg:#f5f8fa;
+      --logo:url("../../assets/logo.svg");
+      --radius:10px;
+      --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --text:rgba(255,255,255,.92); --muted:rgba(255,255,255,.62); --faint:rgba(255,255,255,.44);
+        --accent:#35c1ef; --bg:#14202b; --bg2:#1b2b39; --bg3:#2d3e50;
+        --border:rgba(255,255,255,.12); --code:rgba(255,255,255,.92); --codebg:#101a23;
+        --logo:url("../../assets/logo-white.svg");
+      }
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font);
+           font-size:16px; line-height:1.6; -webkit-font-smoothing:antialiased; }
+    .wrap { max-width:52rem; margin:0 auto; padding:2rem 1.5rem 5rem; }
+    .logo { display:block; height:32px; background:var(--logo) no-repeat left center/contain;
+            margin-bottom:2.5rem; text-indent:-9999px; overflow:hidden; }
+    .status { display:inline-block; font-family:var(--mono); font-size:.8125rem; font-weight:600;
+              letter-spacing:.02em; padding:.25rem .625rem; border-radius:999px;
+              background:var(--bg3); color:var(--muted); margin-bottom:1rem; }
+    h1 { font-size:1.875rem; line-height:1.25; margin:0 0 .75rem; letter-spacing:-.01em; }
+    h2 { font-size:1.125rem; margin:2.5rem 0 .75rem; letter-spacing:-.005em; }
+    p, li { color:var(--text); }
+    .lead { font-size:1.0625rem; color:var(--muted); margin:0 0 2rem; }
+    .uri { font-family:var(--mono); font-size:.875rem; background:var(--bg2); color:var(--muted);
+           border:1px solid var(--border); border-radius:var(--radius);
+           padding:.75rem 1rem; margin:0 0 2rem; overflow-x:auto; white-space:nowrap; }
+    ul { padding-left:1.25rem; }
+    li { margin:.375rem 0; }
+    code { font-family:var(--mono); font-size:.875em; background:var(--bg2);
+           border:1px solid var(--border); border-radius:4px; padding:.1em .35em; }
+    pre { font-family:var(--mono); font-size:.8125rem; line-height:1.55; background:var(--codebg);
+          color:var(--code); border:1px solid var(--border); border-radius:var(--radius);
+          padding:1rem 1.125rem; overflow-x:auto; margin:1rem 0; }
+    pre code { background:none; border:none; padding:0; font-size:1em; }
+    a { color:var(--accent); text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.9375rem; }
+    th, td { text-align:left; padding:.625rem .75rem; border-bottom:1px solid var(--border);
+             vertical-align:top; }
+    th { font-weight:600; color:var(--muted); font-size:.8125rem; text-transform:uppercase;
+         letter-spacing:.04em; }
+    td code { white-space:nowrap; }
+    footer { margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--border);
+             color:var(--faint); font-size:.875rem; }
+    footer a { color:var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="logo" href="../../">Plantyst</a>
+    <span class="status">401 Unauthorized</span>
+    <h1>Invalid credentials</h1>
+    <p class="lead">An API key or HTTP Basic credentials were presented and the API rejected them.</p>
+    <div class="uri">https://apidocs.plantyst.com/errors/invalid-credentials</div>
+    <h2>What it means</h2>
+    <p>The request carried an API key - in the <code>X-API-KEY</code> header, in the <code>api_key</code> query parameter, or as the password of HTTP Basic authentication - and the key was not accepted. The usual causes are:</p>
+    <ul>
+      <li>the key is not valid, or it has been revoked;</li>
+      <li>the key has passed the end of its validity period;</li>
+      <li>the key belongs to a user account that is no longer active;</li>
+      <li>with HTTP Basic, the username is not the e-mail address of the user the key belongs to.</li>
+    </ul>
+    <p>Keys are matched exactly, including letter case, so a value that has been re-typed, truncated or trimmed of characters lands here as well. This problem type is about a key or Basic credentials; an access token that is refused reports <a href="../invalid-token/">invalid-token</a> instead.</p>
+
+    <h2>What to do</h2>
+    <ul>
+      <li>Treat this as a configuration error - repeating the request will not change the outcome.</li>
+      <li>Verify the key is passed in full and unchanged, and that the account it belongs to is still active. A new key is issued on request at <a href="mailto:support@plantyst.com">support@plantyst.com</a>.</li>
+      <li>Prefer the <code>X-API-KEY</code> header. The <code>api_key</code> query parameter works, but URLs tend to end up in logs and browser history.</li>
+    </ul>
+
+    <h2>Example response</h2>
+<pre><code>HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer realm="https://portal.plantyst.com"
+Content-Type: application/problem+json
+
+{
+  "type": "https://apidocs.plantyst.com/errors/invalid-credentials",
+  "title": "Invalid credentials",
+  "status": 401,
+  "detail": "The credentials sent with the request were rejected."
+}</code></pre>
+    <footer>
+      <a href="../../">Plantyst Portal API reference</a> &middot;
+      <a href="mailto:support@plantyst.com">support@plantyst.com</a>
+    </footer>
+  </div>
+</body>
+</html>
