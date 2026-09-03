@@ -173,6 +173,8 @@ tags:
       ```
       Authorization: Bearer {access_token}
       ```
+
+      The `Token` scheme (`Authorization: Token {access_token}`) is accepted as a historical alias of `Bearer` and behaves identically. Use `Bearer` in new integrations. Neither scheme carries an API key - for those, see _API key authorization_ above.
   - name: Measurements
     description: |
       This section contains endpoints for the resources related to measurements and their basic properties. A measurement is a core resource to which most other API data relates. A measurement object has the following properties:
@@ -474,7 +476,12 @@ tags:
 
       __Security and the recommended integration pattern__
 
-      The delivery is not signed. Treat the payload as a notification and verify anything important by reading the current state through the REST API - the `authorization` object in the body carries a short-lived (1 hour) credential for that: use `authorization.value` as the `Authorization: Bearer {value}` header (or as an API key when `authorizationType` is `ApiKey`). Because the payload contains this credential, treat the whole request body as a secret.
+      The delivery is not signed. Treat the payload as a notification and verify anything important by reading the current state through the REST API - the `authorization` object in the body carries a short-lived (1 hour) credential for that. `authorizationType` names the __kind of credential__, not the name of an HTTP scheme, so send `authorization.value` according to it:
+
+      * `Token` - in the `Authorization: Bearer {value}` header
+      * `ApiKey` - in the `X-API-KEY: {value}` header, or as the password of HTTP Basic with the user's e-mail as the username. __An API key is never read from the `Authorization` header__ - a request sending it as `Authorization: ApiKey {value}` is not authenticated and is answered as an unauthenticated one.
+
+      Because the payload contains this credential, treat the whole request body as a secret.
 
       __Detecting own changes__
 
@@ -5799,7 +5806,7 @@ components:
         authorizationType:
           type: string
           enum: [Token, ApiKey]
-          description: "`Token` - use the value as a bearer token; `ApiKey` - use the value as an API key."
+          description: "The kind of the credential, not the name of an HTTP scheme. `Token` - send the value in the `Authorization: Bearer {value}` header; `ApiKey` - send it in the `X-API-KEY` header, never in `Authorization` (see Webhooks)."
         value:
           type: string
 
