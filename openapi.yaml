@@ -372,7 +372,7 @@ tags:
       * `PlannedFrom`/`PlannedTo` are dates; the recommended format is UTC ISO 8601, e.g. `2026-07-02T06:50:00Z`
       * custom fields: any column prefixed `Custom.` (e.g. `Custom.PartNumber`) is imported into the `customFields` of the planned job
       * numeric validations: `Setpoint`, `TargetAmount`, `MaximumProductionCoefficient` and its denominator must be greater than zero when provided; the coefficient and its denominator form a fraction the same way as on a metadocument (see _Production coefficient_ in the Metadocuments group)
-      * limits: at most 10 000 rows per measurement and 500 000 rows per file
+      * limits: at most 10 000 rows per measurement and 500 000 rows per file; the uploaded file itself must not exceed 50 MB
       * `MeasurementId` determines the measurement of each row. __When the column is missing or empty in all rows, the same imported list is applied to every measurement where the user has the DataAdmin right__ - always provide the column unless this is really intended.
 
       Example:
@@ -2731,6 +2731,7 @@ paths:
         * UTF-8 encoding (optional BOM); the delimiter `,` or `;` is auto-detected from the header row and must be used consistently
         * a header row with the columns (names are case-insensitive): `MeasurementId`, `WorkOrderNumber`, `TimeStamp`, `Value`
         * every row must fill all four columns
+        * limits: the uploaded file itself must not exceed 50 MB
 
         __Matching rules__ (a violating row is skipped and reported):
 
