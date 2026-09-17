@@ -5993,6 +5993,20 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WebhookProductionEntry"
+        links:
+          type: array
+          description: >-
+            The bindings of the metadocument to records kept outside it, the same items as `links` of the REST representation (see the `MetadocumentLink` schema for the kinds); present only when the metadocument has one. The webhook serializes the item in camelCase, so the summary property is `prefetch` here, not `Prefetch`.
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              type:
+                type: integer
+                enum: [1, 2, 3]
+              prefetch:
+                type: string
         customFields:
           type: object
           additionalProperties: true
