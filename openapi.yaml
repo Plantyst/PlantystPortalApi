@@ -1605,16 +1605,24 @@ paths:
         * `PlannedTime` - the __planned production time__, in seconds: the shift time from the measurement calendar (see Calendar) reduced by the planned downtimes (downtime codes flagged with _Planned time reduction_, including breaks).
         * `RunTime` - the __real production time__, in seconds: the machine run time from the collected signal, cleared of all non-production times (including those too short to be reported as downtimes) and reduced by the downtimes flagged with _Production time reduction_.
         * `Availability` (dostupnost) = `RunTime` / `PlannedTime`, a 0-1 ratio.
-        * `Production` - the __real production__: the measured amount including the production coefficient, adjusted by the production entries (corrections are added; when both OK and NOK pieces are recorded, `Production` = `ok` + `nok`).
+        * `Production` - the __real production__: the measured amount including the production coefficient, adjusted by the production entries (see _Production entries_ below).
         * `ProductionCapacity` - the __planned production__: the production expected for the real production time at the `Setpoint` rate (units per minute) of the running jobs; for jobs without a setpoint their real production is used.
         * `Performance` (výkon) = `Production` / `ProductionCapacity`; meaningful when the jobs carry a `Setpoint`, and can exceed 1.
-        * `ok`, `nok` - the good and bad pieces from the production entries. When not recorded, they are derived from `Production` (`ok` = `Production` - `nok`; with no entries at all, `ok` = `Production` and `nok` = 0).
+        * `ok`, `nok` - the good and bad pieces from the production entries (see _Production entries_ below).
         * `Quality` (kvalita) = `ok` / `Production`, a 0-1 ratio.
         * `OEE` = `Availability` × `Performance` × `Quality`; in the product, `Performance` is capped at 1 (as the KPI guide recommends) and a `null` `Performance` or `Quality` counts as 1.
         * `PlneniCapacity`, `Plneni` - the __fulfillment__ metrics (the property names are historical Czech terms for "fulfillment"): `PlneniCapacity` is the production expected for the whole planned production time at the fulfillment norm rate (the `NormaPlneni` custom field of the job, falling back to its `Setpoint`), and `Plneni` = `ok` / `PlneniCapacity` - the fulfillment of the plan.
         * `LastCycleTime` - the duration of the last production cycle, in seconds per piece.
 
         A metric `value` is `null` when it cannot be computed - typically all planned-time-based metrics (`Availability`, `Performance`, `OEE`, ...) when the queried range contains no planned production time (the measurement calendar is empty).
+
+        ### Production entries
+
+        The production entries of the jobs in the queried range enter `Production`, `ok` and `nok` by their `type`:
+
+        * The `type` is matched by its beginning, case-insensitively: entries whose type starts with `OK` count as good pieces, `NOK` as bad pieces and `Correction` as corrections of the measured production. Entries of any other type do not enter the metric set.
+        * When the range contains both OK and NOK entries, `Production` = `ok` + `nok`; the measured production and the corrections are not used.
+        * Otherwise `Production` is the measured production (including the production coefficient) plus the corrections, and the missing side is derived from it: with OK entries only, `nok` = `Production` - `ok`; with NOK entries only, `ok` = `Production` - `nok`; with no entries, `ok` = `Production` and `nok` = 0.
 
         ### Time range limits
 
@@ -5152,7 +5160,7 @@ components:
         type:
           type: string
           maxLength: 100
-          description: User-defined type of the entry (e.g. `OK`, `NOK`).
+          description: User-defined type of the entry (e.g. `OK`, `NOK`). Types beginning with `OK`, `NOK` or `Correction` enter the OEE metric set (`ok`, `nok` and `Production` of `/MeasurementMetricsQuery2`, see there).
         note:
           type: string
           maxLength: 500
@@ -5172,7 +5180,7 @@ components:
         Type:
           type: string
           maxLength: 100
-          description: User-defined type of the entry (e.g. `OK`, `NOK`).
+          description: User-defined type of the entry (e.g. `OK`, `NOK`). Types beginning with `OK`, `NOK` or `Correction` enter the OEE metric set (`ok`, `nok` and `Production` of `/MeasurementMetricsQuery2`, see there).
         Note:
           type: string
           maxLength: 500
