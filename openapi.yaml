@@ -2784,7 +2784,7 @@ paths:
 
         __Effects__
 
-        * the imported records are attached to the job as one batch: the job receives a `links` item of type `ProductionEntries`, and the manual production-entry operations (`POST`/`PATCH`/`DELETE .../ProductionEntries`) respond with `405 Method Not Allowed` for it from then on
+        * the imported records are attached to the job as one batch: the job receives a `links` item with `type: 2` (see the `Metadocument` schema), and the manual production-entry operations (`POST`/`PATCH`/`DELETE .../ProductionEntries`) respond with `405 Method Not Allowed` for it from then on
         * the records enter the analytics as NOK quantities (e.g. the `nok` and `Quality` metrics of `/MeasurementMetricsQuery2`); they are returned neither in `_embedded.productionEntry` of the metadocument nor in `productionEntries` of the webhook payload
         * a repeated import of the same work order replaces the previously imported batch
 
@@ -5239,6 +5239,23 @@ components:
           type: string
           description: The reason of the entry (e.g. why the amount was corrected).
 
+    MetadocumentLink:
+      type: object
+      description: A binding of a metadocument to records kept outside it (see `links` of the metadocument).
+      properties:
+        id:
+          type: string
+          description: The identifier of the bound records.
+        type:
+          type: integer
+          enum: [1, 2, 3]
+          description: >-
+            The kind of the binding. `1` - the metadocument is one instance of a job planned with a `multipleInstanceId`; `id` equals that `multipleInstanceId` and groups the instances of the same job (see the `JobType` schema). `2` - the production records of the job were imported as a batch by `/ProductionEntriesImportCommands`; `id` identifies the batch. `3` - a changeover detected by Plantyst between two jobs; the same item appears on the previous job, the next job and the downtime between them, and its `id` joins the identifiers of those three metadocuments with commas.
+        Prefetch:
+          type: string
+          description: >-
+            A summary of the bound records as a JSON string; present only for `type: 2`, where it carries `FirstEntryTime` and `LastEntryTime`, the time range the imported records span. Note the capital letter of the property name.
+
     Tool:
       type: object
       description: A tool used by the job.
@@ -5262,7 +5279,7 @@ components:
       description: |
         A metadocument returned by the API. Properties with `null` values are omitted in HAL responses.
 
-        The related records are embedded under `_embedded`: `comment` (the comments), `productionEntry` (the production entries) and `user` (the users referenced by the metadocument and its records). An empty collection is omitted - the key is absent rather than an empty array. In the list responses (`/MetadocumentsQuery`, `/Metadocuments?customId=`, `/TaskEntries`) the users are returned once at the list level and the embedded metadocuments carry only `comment` and `productionEntry`. Production records imported as a batch (`/ProductionEntriesImportCommands`) are not part of `productionEntry`.
+        The related records are embedded under `_embedded`: `comment` (the comments), `productionEntry` (the production entries) and `user` (the users referenced by the metadocument and its records). An empty collection is omitted - the key is absent rather than an empty array. In the list responses (`/MetadocumentsQuery`, `/Metadocuments?customId=`, `/TaskEntries`) the users are returned once at the list level and the embedded metadocuments carry only `comment` and `productionEntry`. Production records imported as a batch (`/ProductionEntriesImportCommands`) are not part of `productionEntry` - such a job carries a `links` item with `type: 2` instead (see `links`).
       properties:
         guid:
           type: string
@@ -5371,6 +5388,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Tool"
+        links:
+          type: array
+          description: >-
+            Bindings of the metadocument to records kept outside it; present only when the metadocument has one (the kinds are listed at `MetadocumentLink`). The item with `type: 2` marks a job whose production records were imported as a batch by `/ProductionEntriesImportCommands` - those records are not returned in `_embedded.productionEntry`, so a job with this item is not a job without production records. Not to be confused with the HAL `_links`.
+          items:
+            $ref: "#/components/schemas/MetadocumentLink"
         _links:
           $ref: "#/components/schemas/HalLinks"
         _embedded:
