@@ -93,7 +93,7 @@ info:
 
     __Recording a downtime cause__
 
-    1. Read the downtime code dictionary of the measurement - `GET /DowntimeDictionary?id={measurementId}` - and find the `key` of the desired code.
+    1. Read the downtime code dictionary of the measurement - `GET /DowntimeDictionary?ids={measurementId}&culture=en-US` (both parameters are required) - and find the `key` of the desired code.
     2. Set the code to the downtime metadocument - `PATCH /Metadocuments/{guid}` with `{"DowntimeCodeKey": "..."}`.
     3. Leave the `Title` of the downtime empty - the Portal displays the dictionary description of the code (see the best practices in Metadocuments).
     4. Poll the command result returned by the PATCH until it reaches `Success`.
