@@ -5181,7 +5181,7 @@ components:
       properties:
         id:
           type: integer
-          description: The identifier of the comment and its version, unique within the metadocument. Updating a comment assigns it a new `id` - always re-read the metadocument to get the current `id` before a subsequent update or delete.
+          description: The identifier of the comment and its version, unique within the metadocument. Updating a comment assigns it a new `id` - always re-read the metadocument to get the current `id` before a subsequent update or delete. Identifiers start at `0` and follow the order in which the comments were added or updated, not their time order.
         text:
           type: string
           maxLength: 500
@@ -5199,7 +5199,7 @@ components:
       properties:
         id:
           type: integer
-          description: The identifier of the production entry and its version, unique within the metadocument. Updating a production entry assigns it a new `id` - always re-read the metadocument to get the current `id` before a subsequent update or delete.
+          description: The identifier of the production entry and its version, unique within the metadocument. Updating a production entry assigns it a new `id` - always re-read the metadocument to get the current `id` before a subsequent update or delete. Identifiers start at `0` and follow the order in which the entries were added or updated, not the order of their `time`.
         time:
           type: string
           format: date-time
