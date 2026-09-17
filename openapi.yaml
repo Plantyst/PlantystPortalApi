@@ -50,7 +50,7 @@ info:
     | `Waiting` / `InProgress` | The command is queued or being processed. |
     | `Success` | The command completed successfully. |
     | `Conflict` | An optimistic concurrency check failed (a stale `ETag` or `OriginGuid` value) - re-read the resource and retry. |
-    | `DataError` | The command data are invalid or violate a data rule; the `reason` property describes the problem. Some collisions with already existing data end here instead of as `Conflict` - e.g. an overlapping calendar event (see Calendar). |
+    | `DataError` | The command data are invalid or violate a data rule; the `reason` property describes the problem (generic command results only - the metadocument command results carry no `reason`). Some collisions with already existing data end here instead of as `Conflict` - e.g. an overlapping calendar event (see Calendar). |
     | `Failed` | The command processing failed. |
     | `AlreadyApplied` | The same command was processed more than once and the repeat changed nothing; treat it as a success. A client cannot reach this result by repeating a request - every request creates a new command - so a repeated write is either applied again or rejected, never `AlreadyApplied`. |
 
@@ -2015,6 +2015,8 @@ paths:
         Adds a comment to the specific metadocument.
 
         Required access right: _Contributor_.
+
+        The command result does not carry the identifier of the new comment - read the metadocument to get it.
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
@@ -2144,6 +2146,8 @@ paths:
         Adds a production entry (produced amount record) into the metadocument.
 
         Required access right: _Contributor_.
+
+        The command result does not carry the identifier of the new entry - read the metadocument and find the entry by its `time`, `value` and `type`. The highest `id` is the new entry only when nothing else changed the metadocument in the meantime (see the `ProductionEntry` schema).
 
         When the production entries of the metadocument are managed by a linked external source, the server responds with `405 Method Not Allowed`.
       parameters:
@@ -5583,6 +5587,8 @@ components:
 
     MetadocumentCommandResult:
       type: object
+      description: >-
+        The result of a metadocument command. Unlike the generic command result (`/commandResults/{id}`) it carries no `reason` - a `DataError` or `Failed` result names no cause - and no identifier of a created comment or production entry.
       properties:
         guid:
           type: string
