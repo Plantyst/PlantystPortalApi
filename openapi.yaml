@@ -235,7 +235,7 @@ tags:
       All three endpoints take the queried range as a half-open interval `[From, To)` with both timestamps in UTC ISO 8601 (the `Z` suffix is required - a numeric offset is rejected).
   - name: Metadocuments
     description: |
-      Resources related to metadocuments in the API. Metadocument is a general term for various types of measurement-related records. The `type` of the metadocument determines its meaning:
+      Resources related to metadocuments in the API. A metadocument is a general term for various types of measurement-related records. The `type` of the metadocument determines its meaning:
 
       * `0` - general (undefined) type
       * `1` - __annotation__ - a note attached to a time point or a time range
@@ -456,7 +456,7 @@ tags:
 
       __Users and groups__
 
-      * A SCIM user maps to a Plantyst user: `userName` = e-mail (login), `displayName` = name, `locale` = language. The SCIM `id` equals the `userId` used elsewhere in the API. Deleting a user deactivates it (the account is kept for historical references).
+      * A SCIM user maps to a Plantyst user: `userName` = email (login), `displayName` = name, `locale` = language. The SCIM `id` equals the `userId` used elsewhere in the API. Deleting a user deactivates it (the account is kept for historical references).
       * A SCIM group maps to a Plantyst __group__ - the primary organizational structure of the customer account. Groups can be nested into a hierarchy (see the `parentGroupDisplayName` extension below), and the group hierarchy can then serve as the hierarchy for measurements - elsewhere in the API it appears as `hierarchicalLocations` and the `groupId` filter of `/Measurements`. A created group becomes a child of the directory root group, or of the group named by `parentGroupDisplayName`. __Group membership controls the access of the users to the measurements under the group.__
 
       __Plantyst SCIM extensions__
@@ -497,7 +497,7 @@ tags:
       The delivery is not signed. Treat the payload as a notification and verify anything important by reading the current state through the REST API - the `authorization` object in the body carries a short-lived (1 hour) credential for that. `authorizationType` names the __kind of credential__, not the name of an HTTP scheme, so send `authorization.value` according to it:
 
       * `Token` - in the `Authorization: Bearer {value}` header
-      * `ApiKey` - in the `X-API-KEY: {value}` header, or as the password of HTTP Basic with the user's e-mail as the username. __An API key is never read from the `Authorization` header__ - a request sending it as `Authorization: ApiKey {value}` is not authenticated and is answered as an unauthenticated one.
+      * `ApiKey` - in the `X-API-KEY: {value}` header, or as the password of HTTP Basic with the user's email as the username. __An API key is never read from the `Authorization` header__ - a request sending it as `Authorization: ApiKey {value}` is not authenticated and is answered as an unauthenticated one.
 
       Because the payload contains this credential, treat the whole request body as a secret.
 
@@ -572,7 +572,7 @@ paths:
             type: string
             enum: [code]
           example: code
-          description: The type of the authorization flow; currently, Plantyst supports only the „code“ type.
+          description: The type of the authorization flow; currently, Plantyst supports only the `code` type.
         - name: redirect_uri
           in: query
           required: true
@@ -835,7 +835,7 @@ paths:
 
         The `DeviceId` and `InputId` identify the hardware input the measurement will collect the data from - the identifiers are provided by Plantyst when the device is provisioned (contact the support when in doubt). The measurement is placed under the given hierarchical location, or directly under the root of the customer account when `HierarchicalLocationId` is omitted.
 
-        Required rights: administrator access to the device within the current customer account of the user.
+        Required access rights: administrator access to the device within the current customer account of the user.
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
@@ -1295,7 +1295,7 @@ paths:
 
         A violation of the configuration rules (unsupported type, invalid JSON, missing or duplicate `InputId`) finishes with the `DataError` command result.
 
-        Required rights: administrator access to the device within the current customer account; with `MeasurementId` also the _Owner_ right of the measurement.
+        Required access rights: administrator access to the device within the current customer account; with `MeasurementId` also the _Owner_ right of the measurement.
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
@@ -1342,7 +1342,7 @@ paths:
 
         The compatibility of the device board firmware with the measurement is checked first: an incompatible combination fails synchronously with `409 Conflict`, unless `IgnoreFilterIncompatibility: true` is set.
 
-        Required rights: the _Owner_ right of the measurement (within the current customer account) and administrator access to the device of the data source.
+        Required access rights: the _Owner_ right of the measurement (within the current customer account) and administrator access to the device of the data source.
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
@@ -1382,7 +1382,7 @@ paths:
       description: |
         Removes the assignment of the data source (device input) to the measurement - the measurement stops collecting the data of the input. Unassigning all data sources is also the precondition of archiving a measurement.
 
-        Required rights: the _Owner_ right of the measurement and administrator access to the device of the data source; the data source must currently be assigned to the measurement.
+        Required access rights: the _Owner_ right of the measurement and administrator access to the device of the data source; the data source must currently be assigned to the measurement.
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
@@ -1634,7 +1634,7 @@ paths:
 
         A metric `value` is `null` when it cannot be computed - typically all planned-time-based metrics (`Availability`, `Performance`, `OEE`, ...) when the queried range contains no planned production time (the measurement calendar is empty).
 
-        ### Production entries
+        __Production entries__
 
         The production entries of the jobs in the queried range enter `Production`, `ok` and `nok` by their `type`:
 
@@ -1642,7 +1642,7 @@ paths:
         * When the range contains both OK and NOK entries, `Production` = `ok` + `nok`; the measured production and the corrections are not used.
         * Otherwise `Production` is the measured production (including the production coefficient) plus the corrections, and the missing side is derived from it: with OK entries only, `nok` = `Production` - `ok`; with NOK entries only, `ok` = `Production` - `nok`; with no entries, `ok` = `Production` and `nok` = 0.
 
-        ### Time range limits
+        __Time range limits__
 
         The endpoint computes the metric set on the fly, so the queried range is limited:
 
@@ -4469,9 +4469,9 @@ paths:
       tags: [SCIM Provisioning]
       summary: Create user (SCIM)
       description: |
-        Creates a user in the directory. The `userName` becomes the e-mail (and login) of the Plantyst user; `locale` sets the user language (the directory default is used when omitted).
+        Creates a user in the directory. The `userName` becomes the email (and login) of the Plantyst user; `locale` sets the user language (the directory default is used when omitted).
 
-        The domain of the `userName` e-mail must be one of the domains registered for the directory (agreed during the directory setup) - other domains are rejected with `400 Bad Request`.
+        The domain of the `userName` email must be one of the domains registered for the directory (agreed during the directory setup) - other domains are rejected with `400 Bad Request`.
       requestBody:
         required: true
         content:
@@ -5040,7 +5040,7 @@ components:
           properties:
             timezone:
               type: array
-              description: Timezones referenced by the measurements.
+              description: Time zones referenced by the measurements.
               items:
                 type: object
                 properties:
@@ -6111,7 +6111,7 @@ components:
           description: The SCIM identifier; equals the Plantyst `userId`. Assigned by the server.
         userName:
           type: string
-          description: The e-mail (login) of the user.
+          description: The email (login) of the user.
         displayName:
           type: string
         name:
