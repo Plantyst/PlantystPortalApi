@@ -233,6 +233,18 @@ tags:
       The metrics are returned as `{name, value}` pairs; a `value` is `null` when the metric cannot be computed from the available data. Reading requires the _View_ right.
 
       All three endpoints take the queried range as a half-open interval `[From, To)` with both timestamps in UTC ISO 8601 (the `Z` suffix is required - a numeric offset is rejected).
+
+      __The two metric endpoints side by side__
+
+      | | `/MeasurementMetricsQuery` | `/MeasurementMetricsQuery2` (Beta) |
+      |---|---|---|
+      | Metrics | `Production`, `Uptime` | `PlannedTime`, `RunTime`, `Availability`, `Production`, `ProductionCapacity`, `Performance`, `ok`, `nok`, `Quality`, `OEE`, `PlneniCapacity`, `Plneni`, `LastCycleTime` |
+      | Computed from | the collected signal | the signal, the measurement calendar, the running jobs (setpoint, production coefficient) and their production entries |
+      | Range length | unlimited (a long range means a slow response) | at most 24 hours |
+      | Range age | unlimited | `From` at most 6 days back |
+      | Request specifics | `MaximumCount` must be sent - the default `0` returns no metrics | - |
+      | A query breaking the limits | - | the whole request fails with `400` and an empty body |
+      | Stability | stable | Beta - the metric names and set may change |
   - name: Metadocuments
     description: |
       Resources related to metadocuments in the API. A metadocument is a general term for various types of measurement-related records. The `type` of the metadocument determines its meaning:
@@ -320,7 +332,7 @@ tags:
 
       The pair is stored as it arrives. The API neither reduces the fraction nor collapses it into a single number, and reads both properties back the way they were sent - `2` with `3` stays `2` and `3`, never `0.667`.
 
-      Which form is chosen matters at the boundary of the maximum, because the current and the maximum coefficient are compared as the numbers the fractions evaluate to. A decimal written in place of a fraction is only an approximation of it and can land just above the maximum, so a current coefficient of `0.6666666666666667` against the maximum `2/3` is refused. Give both coefficients in the same form whenever they are meant to be equal.
+      Because the comparison evaluates the fractions, a decimal written in place of a fraction is only an approximation and can land just above the maximum: a current coefficient of `0.6666666666666667` against the maximum `2/3` is refused. Give both coefficients in the same form whenever they are meant to be equal.
 
       On update the rules are evaluated against the __resulting__ state, not against the payload: a property the payload does not mention keeps its current value and enters the check with it. That is what makes it possible to change one property of the group at a time once the coefficient is set - and what makes such a change fail when the result would violate the rules. A request that breaks any of them is rejected synchronously with `400 Bad Request`, and the metadocument stays unchanged.
 
