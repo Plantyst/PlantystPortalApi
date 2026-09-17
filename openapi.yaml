@@ -4958,7 +4958,9 @@ components:
       description: |
         Optional client-supplied identifier of the command. The command result can later be looked up by this identifier - metadocument commands with `GET /MetadocumentCommandResults?commandCustomId={id}`, other commands with `GET /commandResults?commandCustomId={id}`.
 
-        The value is accepted only once per user: a repeated value is answered with `409 Conflict` without executing the command, and the lookup above returns how the first attempt ended. Generate it per operation (e.g. a GUID) and never derive it from business data - the identifiers never expire (see _Idempotency with `commandCustomId`_ in the introduction). It identifies the command, not the created record, unlike the `CustomId` property of a metadocument.
+        The value is accepted only once per user: a repeated value is answered with `409 Conflict` without executing the command, and the lookup above returns how the first attempt ended. The body of that `409` is a plain-text sentence naming the identifier of the earlier command (`text/plain`, not JSON) - do not parse it, read the outcome through the lookup above. This differs from the `409` of `POST /Metadocuments` for a duplicate `CustomId`, whose body is JSON with a link to the existing metadocument.
+
+        Generate it per operation (e.g. a GUID) and never derive it from business data - the identifiers never expire (see _Idempotency with `commandCustomId`_ in the introduction). It identifies the command, not the created record, unlike the `CustomId` property of a metadocument.
 
   schemas:
     AuthorizationCodeTokenRequest:
