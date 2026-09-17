@@ -31,6 +31,8 @@ info:
 
     In HAL responses, a relation with a single link is serialized as an object, while a relation with multiple links is serialized as an array of link objects.
 
+    Embedded resources follow the same rule: a relation holding a single resource is an object, a collection is an array. An empty collection is omitted - the key is absent from `_embedded` rather than present as an empty array.
+
     For the Portal JSON endpoints, property names in request payloads are matched case-insensitively (e.g. `text` and `Text` are equivalent); the documentation uses the PascalCase form for requests and the camelCase form for responses, matching the server's own serialization. Two groups differ: the OAuth requests follow the OAuth standard snake_case names (`grant_type`, `client_id`), and the SCIM endpoints follow the SCIM attribute names documented in their chapter.
 
     ## Synchronous and asynchronous operations
@@ -279,6 +281,8 @@ tags:
       __Identifiers of comments and production entries__
 
       The `id` of a comment or a production entry is unique within its metadocument, but it is not stable: every update assigns the record a new one. Do not keep these identifiers - re-read the metadocument after each update.
+
+      Comments and production entries have no read endpoint of their own: they are returned embedded in the metadocument (`_embedded.comment`, `_embedded.productionEntry`). The `self` link of a record only identifies it - it cannot be requested with `GET`.
 
       This also decides how a repeated request behaves. Repeating an __update or a delete__ with the previous `id` ends with `404 Not Found`, because that identifier no longer exists - such a repeat cannot apply twice. Repeating an __add__ is the opposite: nothing identifies the record, so a second request creates a second comment or entry. That is the case where `commandCustomId` is needed.
 
@@ -1712,6 +1716,8 @@ paths:
       description: |
         Gets the metadocuments identified by the combination of `measurementId` and `customId`.
 
+        The response has the shape of `/MetadocumentsQuery`: each metadocument carries its own `_embedded.comment` and `_embedded.productionEntry` (see the `Metadocument` schema), the related users are returned once in the top-level `_embedded.user`.
+
         Required access right: _View_.
       parameters:
         - name: measurementId
@@ -2252,6 +2258,8 @@ paths:
       description: |
         Gets the metadocuments for the given measurements and time ranges. The request may contain at most 100 queries.
 
+        Each returned metadocument carries its own `_embedded.comment` and `_embedded.productionEntry` (see the `Metadocument` schema); the related users are returned once, in the top-level `_embedded.user`.
+
         Required access right: _View_ for every queried measurement (otherwise `403 Forbidden`).
       requestBody:
         required: true
@@ -2341,6 +2349,32 @@ paths:
                             _links:
                               self:
                                 href: /Api/Metadocuments/13f6a3b3-0416-49e9-81ed-fab139518c0d/Comments/0/
+                              user:
+                                href: /Api/Users/497
+                    - guid: 8c1f4e2a-6d3b-4b9e-9a71-2f0c5d7e6b44
+                      type: 2
+                      title: Work order 42
+                      creatorId: 497
+                      measurementId: 3
+                      from: "2026-07-01T05:30:00Z"
+                      to: "2026-07-01T07:30:00Z"
+                      setpoint: 30
+                      eTag: "\"2f007274-0000-0d00-0000-6a4e18d90000\""
+                      lastModified: "2026-07-01T07:05:12Z"
+                      _links:
+                        self:
+                          href: /Api/Metadocuments/8c1f4e2a-6d3b-4b9e-9a71-2f0c5d7e6b44
+                        user:
+                          href: /Api/Users/497
+                      _embedded:
+                        productionEntry:
+                          - id: 1
+                            time: "2026-07-01T07:00:00Z"
+                            value: 120
+                            type: OK
+                            _links:
+                              self:
+                                href: /Api/Metadocuments/8c1f4e2a-6d3b-4b9e-9a71-2f0c5d7e6b44/ProductionEntries/1/
                               user:
                                 href: /Api/Users/497
         "400":
@@ -2751,7 +2785,7 @@ paths:
         __Effects__
 
         * the imported records are attached to the job as one batch: the job receives a `links` item of type `ProductionEntries`, and the manual production-entry operations (`POST`/`PATCH`/`DELETE .../ProductionEntries`) respond with `405 Method Not Allowed` for it from then on
-        * the records enter the analytics as NOK quantities (e.g. the `nok` and `Quality` metrics of `/MeasurementMetricsQuery2`); they are not returned in the `productionEntries` array of the metadocument
+        * the records enter the analytics as NOK quantities (e.g. the `nok` and `Quality` metrics of `/MeasurementMetricsQuery2`); they are returned neither in `_embedded.productionEntry` of the metadocument nor in `productionEntries` of the webhook payload
         * a repeated import of the same work order replaces the previously imported batch
 
         __Command result__
@@ -2943,6 +2977,19 @@ paths:
                       _links:
                         self:
                           href: /Api/Users/92
+                  metadocument:
+                    guid: 112e6ba3-5857-4fde-b22a-b6a0c2c9de54
+                    type: 2
+                    title: Work order 42
+                    measurementId: 3
+                    from: "2026-07-12T08:00:00Z"
+                    to: "2026-07-12T09:00:00Z"
+                    task:
+                      id: 332011b2-f82f-4b05-afb5-a55cc6e71418
+                      initialTitle: Check the tooling
+                    _links:
+                      self:
+                        href: /Api/Metadocuments/112e6ba3-5857-4fde-b22a-b6a0c2c9de54
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -5212,7 +5259,10 @@ components:
 
     Metadocument:
       type: object
-      description: A metadocument returned by the API. Properties with `null` values are omitted in HAL responses.
+      description: |
+        A metadocument returned by the API. Properties with `null` values are omitted in HAL responses.
+
+        The related records are embedded under `_embedded`: `comment` (the comments), `productionEntry` (the production entries) and `user` (the users referenced by the metadocument and its records). An empty collection is omitted - the key is absent rather than an empty array. In the list responses (`/MetadocumentsQuery`, `/Metadocuments?customId=`, `/TaskEntries`) the users are returned once at the list level and the embedded metadocuments carry only `comment` and `productionEntry`. Production records imported as a batch (`/ProductionEntriesImportCommands`) are not part of `productionEntry`.
       properties:
         guid:
           type: string
@@ -5307,6 +5357,16 @@ components:
         automaticTermination:
           type: boolean
           description: Determines whether the metadocument will be terminated automatically.
+        task:
+          type: object
+          description: The task attached to the metadocument (see Tasks (Beta)); present only when the metadocument has a task.
+          properties:
+            id:
+              type: string
+              description: The task identifier (`/TaskEntries/{id}`).
+            initialTitle:
+              type: string
+              description: The title the task was created with.
         tools:
           type: array
           items:
@@ -6282,9 +6342,9 @@ components:
                 description: The users referenced by the tasks and their metadocuments.
             metadocument:
               type: array
+              description: The metadocuments the tasks belong to, in the `Metadocument` representation (with their own `_embedded.comment` and `_embedded.productionEntry`). Their users are returned in the list-level `user`.
               items:
-                type: object
-                description: The metadocuments the tasks belong to (see Metadocuments).
+                $ref: "#/components/schemas/Metadocument"
 
     TaskEntry:
       type: object
@@ -6321,7 +6381,14 @@ components:
           $ref: "#/components/schemas/HalLinks"
         _embedded:
           type: object
-          description: The embedded users (and the metadocument on the single-task endpoint).
+          description: Present on the single-task endpoint only - the users referenced by the task and the metadocument the task is attached to (a single object, in the `Metadocument` representation). In the list, users and metadocuments are embedded once at the list level.
+          properties:
+            user:
+              type: array
+              items:
+                $ref: "#/components/schemas/UserSummary"
+            metadocument:
+              $ref: "#/components/schemas/Metadocument"
 
   responses:
     Unauthorized:
