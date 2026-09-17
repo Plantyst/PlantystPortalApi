@@ -23,6 +23,8 @@ info:
 
     The response describes the user the credential is bound to - check that it is the expected account. The next call is typically `GET /Measurements` - the list of the measurements the user can access.
 
+    Two terms recur throughout the documentation: a __subscription__ is the customer account (the company) a user belongs to, and the __current subscription__ is the one the user works in - most collection endpoints (measurements, the job plan, users) are scoped to it (see Users & Subscriptions). The prose says "customer account" where the business meaning matters and "subscription" where it names the API resource.
+
     ## Response format (HAL)
 
     Most read endpoints return their data in the HAL convention (Hypertext Application Language, media type `application/hal+json`): the properties of the resource, its links under `_links` and the related resources under `_embedded`.
