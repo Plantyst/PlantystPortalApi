@@ -2028,7 +2028,7 @@ paths:
 
         Required access right: _Contributor_.
 
-        The command result does not carry the identifier of the new comment - read the metadocument to get it.
+        `Time` is not checked against the time range of the metadocument - unlike a production entry, a comment may carry any time. The command result does not carry the identifier of the new comment - read the metadocument to get it.
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
@@ -2066,11 +2066,11 @@ paths:
       tags: [Metadocuments]
       summary: Update metadocument comment
       description: |
-        Updates the comment with the specific `Id` of the given metadocument.
+        Updates the comment with the specific `Id` of the given metadocument. The comment is replaced as a whole - send `Text` and `Time`; an omitted `Time` moves the comment to the current time.
 
         Required access right: _Contributor_; only the author of the comment can update it.
 
-        __Note:__ Updating a comment assigns it a new `id` (the `id` identifies the comment and its version). Re-read the metadocument to get the current `id` before a subsequent update or delete - repeating this request with the previous `id` ends with `404 Not Found`.
+        __Note:__ Updating a comment assigns it a new `id` (the `id` identifies the comment and its version), and every further update assigns the next one. Re-read the metadocument to get the current `id` before a subsequent update or delete - repeating this request with the previous `id` ends with `404 Not Found`, synchronously and without creating a command.
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
