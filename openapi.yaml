@@ -12,16 +12,16 @@ info:
 
     The credentials are issued on request at [support@plantyst.com](mailto:support@plantyst.com). Two mechanisms are available (see Authorization for the details), each suited for a different kind of integration:
 
-    * __API key__ - a per-user secret key, best suited for server-to-server integrations, typically reading the data. Keep in mind that the key is bound to a specific Plantyst user: everything written with it (downtimes, comments, production records, ...) is recorded in that user's name.
+    * __API key__ - a per-user secret key, best suited for server-to-server integrations, typically reading the data. The key is bound to a specific Plantyst user: everything written with it (downtimes, comments, production records, ...) is recorded in that user's name.
     * __OAuth2__ - the authorization code flow, best suited for interactive applications used by multiple users - each user works under their own identity.
 
-    The quickest way to verify the access is to ask who you are:
+    Verify the access by asking who you are:
 
     ```
     curl -H "X-API-KEY: {api_key}" https://portal.plantyst.com/api/Users/Me
     ```
 
-    The response describes the user the credential is bound to - check that it is the expected account. A natural next call is `GET /Measurements` - the list of the measurements the user can access.
+    The response describes the user the credential is bound to - check that it is the expected account. The next call is typically `GET /Measurements` - the list of the measurements the user can access.
 
     ## Response format (HAL)
 
@@ -68,7 +68,7 @@ info:
     * __Looking the result up__ - when the response with the `location` is lost, the result can be found with `GET /commandResults?commandCustomId={id}` (or `GET /MetadocumentCommandResults?commandCustomId={id}` for the metadocument commands).
     * __Preventing a duplicate write__ - the same value is carried out only once. A command sent with a `commandCustomId` the same user has already used is answered with `409 Conflict` and __is not executed at all__; the body is a plain-text sentence naming the identifier of the earlier command.
 
-    Together the two make `commandCustomId` a full idempotency key, which is the safest way to repeat a write whose response was lost: send the request again with the same identifier and it either performs the write once (`202`), or answers `409` - and the lookup above then tells how the first attempt ended, including the identifier of the record it created. The repeat never produces a duplicate.
+    Together the two make `commandCustomId` an idempotency key for repeating a write whose response was lost: send the request again with the same identifier and it either performs the write once (`202`), or answers `409` - and the lookup above then tells how the first attempt ended, including the identifier of the record it created. The repeat never produces a duplicate.
 
     The values are remembered per user and never expire, so one value is accepted only once for the whole lifetime of the account - generate it per operation (e.g. a GUID), reuse it only when retrying that same operation, and never derive it from business data that could legitimately repeat. There are two independent namespaces: the metadocument commands and all the other commands, so the same value can appear once in each.
 
@@ -268,13 +268,13 @@ tags:
 
       This makes a create with a `CustomId` safe to retry: when the client does not know whether an earlier attempt got through, repeating it either creates the metadocument (`202`) or returns `409` with the link to the record the earlier attempt created. Assigning a `CustomId` is therefore the recommended way to make metadocument creation idempotent.
 
-      Two limits of the check are worth knowing: deleted metadocuments are ignored, so a `CustomId` becomes free again once its metadocument is deleted; and the check runs __only on create__ - `PATCH` can set a `CustomId` that another metadocument of the measurement already uses, and the API does not prevent it.
+      Two limits of the check: deleted metadocuments are ignored, so a `CustomId` becomes free again once its metadocument is deleted; and the check runs __only on create__ - `PATCH` can set a `CustomId` that another metadocument of the measurement already uses, and the API does not prevent it.
 
       __Command custom identifier__
 
       Every command operation accepts an optional `commandCustomId` query parameter - a client-supplied identifier of the command. The command result can later be looked up with `GET /MetadocumentCommandResults?commandCustomId={id}` (useful when the response with the command location was lost), and a repeated value is refused with `409 Conflict` without executing the command - see _Idempotency with `commandCustomId`_ in the introduction. The metadocument commands have their own namespace of these identifiers, separate from the rest of the API.
 
-      __`commandCustomId` and `CustomId` are two different things despite the similar names.__ This is the most easily confused pair in the API, and the cleanest way to tell them apart is by the question each one answers: `CustomId` answers _"does this record already exist on this measurement?"_, `commandCustomId` answers _"have I already performed this operation?"_. Everything else follows from that:
+      __`commandCustomId` and `CustomId` are two different things despite the similar names.__ They are told apart by the question each one answers: `CustomId` answers _"does this record already exist on this measurement?"_, `commandCustomId` answers _"have I already performed this operation?"_. The consequences:
 
       | | `CustomId` | `commandCustomId` |
       |---|---|---|
@@ -286,7 +286,7 @@ tags:
       | Can the value be used again | __yes__ - deleting the metadocument frees it | __no__ - never |
       | May be derived from the content of the record | __yes__ | __no__ |
 
-      In both cases the `409` is not a dead end but the second half of a retry: it says "this has already been done" and leads to the outcome of the first attempt. A client that lost the original response can therefore always find out whether its write went through and what it created.
+      In both cases the `409` leads to the outcome of the first attempt, so a client that lost the original response can always find out whether its write went through and what it created.
 
       The last two rows belong together. A `CustomId` derived from the content of the record is safe - when the record is deleted, the value is free again. The same value used as a `commandCustomId` would be spent by the first successful write and that record could never be created again, not even after deleting it. Generate `commandCustomId` values per operation (e.g. a GUID) and reuse a value only when retrying that same operation.
 
@@ -525,7 +525,7 @@ tags:
 
       Access devices are created on request at [support@plantyst.com](mailto:support@plantyst.com) - state how many devices you need and what each of them is for; you receive their access keys. There is currently no self-service management API.
 
-      Note that the screen itself is a web page rather than a REST resource, so its URL and its display options are not part of this API reference.
+      The screen itself is a web page rather than a REST resource, so its URL and its display options are not part of this API reference.
 
       __Switching the user__
 
@@ -1197,7 +1197,7 @@ paths:
       tags: [Measurements]
       summary: Update tag
       description: |
-        Updates the title and the color of the tag. Note that the change affects the tag itself - it is visible on every measurement the tag is assigned to.
+        Updates the title and the color of the tag. The change affects the tag itself - it is visible on every measurement the tag is assigned to.
 
         Required access right: _Admin_.
       requestBody:
@@ -1651,7 +1651,7 @@ paths:
 
         Both limits are validated __per query__ - a single query breaking them fails the whole request with `400`, and no results are computed for the remaining queries.
 
-        Note that the age limit is a __sliding window against the current UTC time__, not a calendar boundary: a range that was accepted yesterday is rejected today once its `From` passes the 6-day mark. Do not build retries or scheduled backfills on the assumption that an older range stays queryable.
+        The age limit is a __sliding window against the current UTC time__, not a calendar boundary: a range that was accepted yesterday is rejected today once its `From` passes the 6-day mark. Do not build retries or scheduled backfills on the assumption that an older range stays queryable.
 
         __Beta:__ the endpoint is a Beta version - the set of returned metrics and their names may still change.
 
@@ -1958,9 +1958,7 @@ paths:
 
         The optional `ETag` property enables the optimistic concurrency check: when the metadocument has been modified in the meantime, the command finishes with the `Conflict` result and the metadocument stays unchanged. The server responds with `400 Bad Request` when the patch does not change anything or would leave the metadocument without content. The "does not change anything" rule is evaluated over the payload as a whole: the request is accepted as soon as one property differs from its current value, and properties sent with the value they already have do not make it fail.
 
-        __A stale `ETag` is not reported by the HTTP status code__ - the request is answered with `202 Accepted` exactly like an accepted update, and only the polled command result distinguishes `Success` from `Conflict`. Poll the result before treating the update as applied.
-
-        Omitting `ETag` does not disable the check and does not make the patch unconditional - it is applied as "last read wins" and can still end with `Conflict` (see the group description).
+        __A stale `ETag` is not reported by the HTTP status code__ - the request is answered with `202 Accepted` and only the polled command result carries `Conflict`, so poll the result before treating the update as applied. Omitting `ETag` does not make the update unconditional - it can still end with `Conflict` (see _Optimistic concurrency_ in the group description).
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
@@ -1993,14 +1991,14 @@ paths:
 
         Required access right: _Contributor_ (see the group description for `readOnly` and `locks` restrictions).
 
-        The optional `etag` parameter behaves exactly like the `ETag` of `PATCH`: a stale value is still answered with `202 Accepted` and only the polled command result carries `Conflict`, with the metadocument left in place - so poll the result before treating the metadocument as deleted. Omitting `etag` does not make the delete unconditional (see the group description).
+        The optional `etag` parameter behaves like the `ETag` of the update: a stale value is answered with `202 Accepted` and only the polled command result carries `Conflict`, with the metadocument left in place, so poll the result before treating the metadocument as deleted. Omitting `etag` does not make the delete unconditional (see _Optimistic concurrency_ in the group description).
       parameters:
         - name: etag
           in: query
           required: false
           schema:
             type: string
-          description: Optional ETag of the metadocument for the optimistic concurrency check. Omitting it does not make the delete unconditional - it still runs as "last read wins" and can finish with the `Conflict` result (see the group description).
+          description: The `eTag` of the metadocument for the optimistic concurrency check; omitting it does not make the delete unconditional (see the group description).
         - $ref: "#/components/parameters/CommandCustomId"
       responses:
         "202":
@@ -4014,7 +4012,7 @@ paths:
         required: true
         schema:
           type: string
-        description: The event identifier - the Unix timestamp (in seconds) of the event start. Note that changing the event start also changes its identifier.
+        description: The event identifier - the Unix timestamp (in seconds) of the event start. Changing the event start also changes its identifier.
         example: "1783836000"
     patch:
       operationId: updateCalendarEvent
@@ -4935,9 +4933,7 @@ components:
       description: |
         Optional client-supplied identifier of the command. The command result can later be looked up by this identifier - metadocument commands with `GET /MetadocumentCommandResults?commandCustomId={id}`, other commands with `GET /commandResults?commandCustomId={id}`.
 
-        The value is accepted only once per user: a command sent with an identifier the same user has already used is answered with `409 Conflict` and is not executed. That is what makes a retry safe - after a `409`, the lookup above returns how the first attempt ended. Generate the value per operation (e.g. a GUID), reuse it only when retrying that same operation, and never derive it from business data; the identifiers never expire. See _Idempotency with `commandCustomId`_ in the introduction.
-
-        It identifies the __command__, not the created record - it is a different thing from the `CustomId` property of a metadocument body despite the similar name.
+        The value is accepted only once per user: a repeated value is answered with `409 Conflict` without executing the command, and the lookup above returns how the first attempt ended. Generate it per operation (e.g. a GUID) and never derive it from business data - the identifiers never expire (see _Idempotency with `commandCustomId`_ in the introduction). It identifies the command, not the created record, unlike the `CustomId` property of a metadocument.
 
   schemas:
     AuthorizationCodeTokenRequest:
@@ -5994,7 +5990,7 @@ components:
           description: The key of the assigned downtime code.
         downtimeCode:
           type: [object, "null"]
-          description: The assigned downtime code resolved from the dictionary. Note that unlike the REST representation (where `downtimeCode` is a string with the key), the webhook carries an object with the human-readable code and its description.
+          description: The assigned downtime code resolved from the dictionary. Unlike the REST representation (where `downtimeCode` is a string with the key), the webhook carries an object with the human-readable code and its description.
           properties:
             code:
               type: string
