@@ -282,7 +282,7 @@ tags:
 
       The `id` of a comment or a production entry is unique within its metadocument, but it is not stable: every update assigns the record a new one. Do not keep these identifiers - re-read the metadocument after each update.
 
-      Comments and production entries have no read endpoint of their own: they are returned embedded in the metadocument (`_embedded.comment`, `_embedded.productionEntry`). The `self` link of a record only identifies it - it cannot be requested with `GET`.
+      Comments and production entries have no read endpoint of their own: they are returned embedded in the metadocument (`_embedded.comment`, `_embedded.productionEntry`). The `self` link of a record only identifies it - a `GET` on it is answered with `405 Method Not Allowed`, not `404`.
 
       This also decides how a repeated request behaves. Repeating an __update or a delete__ with the previous `id` ends with `404 Not Found`, because that identifier no longer exists - such a repeat cannot apply twice. Repeating an __add__ is the opposite: nothing identifies the record, so a second request creates a second comment or entry. That is the case where `commandCustomId` is needed.
 
