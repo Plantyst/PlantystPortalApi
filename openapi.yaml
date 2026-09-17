@@ -91,6 +91,20 @@ info:
 
     ## Common workflows
 
+    __Which endpoint answers which question__
+
+    | Question | Endpoint | How the time range is read |
+    |---|---|---|
+    | How much was produced in a period, and how long did the machine run? | `POST /MeasurementMetricsQuery` (`Production`, `Uptime`) | `[From, To)` |
+    | What was the OEE of a shift or a day? | `POST /MeasurementMetricsQuery2` - a range of at most 24 hours, at most 6 days back | `[From, To)` |
+    | How many good and bad pieces were made in a period? | `POST /MeasurementMetricsQuery2` (`ok`, `nok`, `Quality`) - not a sum of the production entries returned by `/MetadocumentsQuery`, which come per whole metadocument | `[From, To)` |
+    | Which jobs, downtimes and annotations ran in a period? | `POST /MetadocumentsQuery` | every metadocument overlapping the range, both ends inclusive, returned whole |
+    | How many downtimes or jobs were there per day, week, ...? | `POST /MetadocumentAggregationsQuery` | buckets given by `AggregationIntervals` |
+    | What production was recorded on one job? | `GET /Metadocuments/{guid}` - `_embedded.productionEntry`; the entries have no endpoint of their own | - |
+    | Where are the NOK records imported from a CSV? | only in the metrics of `/MeasurementMetricsQuery2`; the records themselves are not readable through the API (the job carries a `links` item with `type: 2`) | - |
+    | Who changed what, and when? | `POST /MetadocumentHistoryLogsQuery` | selected by `processedDate` |
+    | Has my write been applied? | `GET` of the `location` returned with the `202` - `Api/MetadocumentCommandResults/{guid}` or `api/commandResults/{id}` | - |
+
     __Recording a downtime cause__
 
     1. Read the downtime code dictionary of the measurement - `GET /DowntimeDictionary?ids={measurementId}&culture=en-US` (both parameters are required) - and find the `key` of the desired code.
