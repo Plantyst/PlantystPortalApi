@@ -2260,6 +2260,8 @@ paths:
 
         Each returned metadocument carries its own `_embedded.comment` and `_embedded.productionEntry` (see the `Metadocument` schema); the related users are returned once, in the top-level `_embedded.user`.
 
+        A metadocument is returned when its time range overlaps the queried range, both ends inclusive; a metadocument without `to` counts as still running. It is returned whole - with all its comments and production entries, including those outside the queried range. The sum of the `_embedded.productionEntry` values is therefore the production recorded on the whole metadocument, not the production of the queried range; for the production of a range use `/MeasurementMetricsQuery2`.
+
         Required access right: _View_ for every queried measurement (otherwise `403 Forbidden`).
       requestBody:
         required: true
