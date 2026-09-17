@@ -1444,6 +1444,7 @@ paths:
           application/json:
             schema:
               type: object
+              required: [Queries]
               properties:
                 Queries:
                   type: array
@@ -2287,6 +2288,7 @@ paths:
           application/json:
             schema:
               type: object
+              required: [Queries]
               properties:
                 Queries:
                   type: array
@@ -2494,6 +2496,7 @@ paths:
           application/json:
             schema:
               type: object
+              required: [Queries]
               properties:
                 Queries:
                   type: array
@@ -2621,6 +2624,7 @@ paths:
           application/json:
             schema:
               type: object
+              required: [Queries]
               properties:
                 Queries:
                   type: array
@@ -3956,6 +3960,7 @@ paths:
           application/json:
             schema:
               type: object
+              required: [Queries]
               properties:
                 Queries:
                   type: array
