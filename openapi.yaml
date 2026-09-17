@@ -2184,7 +2184,9 @@ paths:
 
         Required access right: _Contributor_.
 
-        __Note:__ Updating a production entry assigns it a new `id` (the `id` identifies the entry and its version). Re-read the metadocument to get the current `id` before a subsequent update or delete - repeating this request with the previous `id` ends with `404 Not Found`.
+        The replacement covers every property - an omitted `Note` or `Reason` clears the stored value, and an omitted `Time` moves the entry to the current time. Send the unchanged properties along with the changed one.
+
+        __Note:__ Updating a production entry assigns it a new `id` (the `id` identifies the entry and its version), and every further update assigns the next one. Re-read the metadocument to get the current `id` before a subsequent update or delete - repeating this request with the previous `id` ends with `404 Not Found`, synchronously and without creating a command, so such a repeat never applies twice.
       parameters:
         - $ref: "#/components/parameters/CommandCustomId"
       requestBody:
