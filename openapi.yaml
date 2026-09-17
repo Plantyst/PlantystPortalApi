@@ -2176,7 +2176,7 @@ paths:
       tags: [Metadocuments]
       summary: Patch Production Entry
       description: |
-        Updates the production entry with the specific `Id` of the given metadocument. The entry is replaced as a whole - provide all its properties, including `Time` (when `Time` is omitted, the current UTC time is used, which fails with the `DataError` result for metadocuments in the past).
+        Updates the production entry with the specific `Id` of the given metadocument. The entry is replaced as a whole - provide all its properties, including `Time` (when `Time` is omitted, the current UTC time is used, which fails with the `DataError` result for metadocuments in the past - asynchronously, the request itself is still answered with `202 Accepted`). The time range check is inclusive on both ends, as for the create operation.
 
         Required access right: _Contributor_.
 
@@ -5236,7 +5236,8 @@ components:
         Time:
           type: string
           format: date-time
-          description: The time of the entry. It must lie within the time range of the metadocument, otherwise the command finishes with the `DataError` result. When omitted, the current UTC time is used - for metadocuments in the past, always provide `Time` explicitly.
+          description: >-
+            The time of the entry. It must lie within the time range of the metadocument, both ends inclusive - a `Time` equal to `from` or `to` is accepted, one second outside is not. A `Time` outside the range is not rejected synchronously - the request is still answered with `202 Accepted` and the command finishes with the `DataError` result. When omitted, the current UTC time is used, which a running metadocument (without `to`) accepts, while for a metadocument in the past it ends with `DataError` - so always provide `Time` explicitly for those.
         Reason:
           type: string
           description: The reason of the entry (e.g. why the amount was corrected).
