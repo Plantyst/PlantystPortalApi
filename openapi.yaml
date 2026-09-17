@@ -668,7 +668,7 @@ paths:
     get:
       operationId: listMeasurements
       tags: [Measurements]
-      summary: List Measurements
+      summary: List measurements
       description: |
         Returns the measurements for which the current user has at least the _View_ right.
 
@@ -1414,7 +1414,7 @@ paths:
     post:
       operationId: listMeasurementTimeSeriesAggregations
       tags: [Measurement Data & Metrics]
-      summary: List Measurement Time Series Aggregation
+      summary: Query time series aggregations
       description: |
         Gets the list of Time Series Aggregation items for the given measurements.
 
@@ -1726,7 +1726,7 @@ paths:
     get:
       operationId: findMetadocumentsByCustomId
       tags: [Metadocuments]
-      summary: Find Metadocuments by custom identifier
+      summary: Find metadocuments by custom identifier
       description: |
         Gets the metadocuments identified by the combination of `measurementId` and `customId`.
 
@@ -1776,7 +1776,7 @@ paths:
     post:
       operationId: addMetadocument
       tags: [Metadocuments]
-      summary: Add Metadocument
+      summary: Add metadocument
       description: |
         Adds a metadocument of the given type for the specific measurement.
 
@@ -1881,7 +1881,7 @@ paths:
     get:
       operationId: getMetadocument
       tags: [Metadocuments]
-      summary: Get Metadocument
+      summary: Get metadocument
       description: |
         Returns the metadocument with the specified GUID, including the embedded comments, production entries and related users.
 
@@ -1948,7 +1948,7 @@ paths:
     patch:
       operationId: patchMetadocument
       tags: [Metadocuments]
-      summary: Patch Metadocument
+      summary: Update metadocument
       description: |
         Updates the metadocument with the specified GUID. Only the properties present in the payload are changed.
 
@@ -1987,7 +1987,7 @@ paths:
     delete:
       operationId: deleteMetadocument
       tags: [Metadocuments]
-      summary: Delete Metadocument
+      summary: Delete metadocument
       description: |
         Deletes the metadocument with the specified GUID.
 
@@ -2024,7 +2024,7 @@ paths:
     post:
       operationId: addMetadocumentComment
       tags: [Metadocuments]
-      summary: Add Metadocument Comment
+      summary: Add metadocument comment
       description: |
         Adds a comment to the specific metadocument.
 
@@ -2066,7 +2066,7 @@ paths:
     patch:
       operationId: patchMetadocumentComment
       tags: [Metadocuments]
-      summary: Patch Metadocument Comment
+      summary: Update metadocument comment
       description: |
         Updates the comment with the specific `Id` of the given metadocument.
 
@@ -2113,7 +2113,7 @@ paths:
     delete:
       operationId: deleteMetadocumentComment
       tags: [Metadocuments]
-      summary: Delete Metadocument Comment
+      summary: Delete metadocument comment
       description: |
         Deletes the comment of the specific metadocument. When the metadocument has no other content, it is deleted as well.
 
@@ -2155,7 +2155,7 @@ paths:
     post:
       operationId: addProductionEntry
       tags: [Metadocuments]
-      summary: Add Production Entry
+      summary: Add production entry
       description: |
         Adds a production entry (produced amount record) into the metadocument.
 
@@ -2192,7 +2192,7 @@ paths:
     patch:
       operationId: patchProductionEntry
       tags: [Metadocuments]
-      summary: Patch Production Entry
+      summary: Update production entry
       description: |
         Updates the production entry with the specific `Id` of the given metadocument. The entry is replaced as a whole - provide all its properties, including `Time` (when `Time` is omitted, the current UTC time is used, which fails with the `DataError` result for metadocuments in the past - asynchronously, the request itself is still answered with `202 Accepted`). The time range check is inclusive on both ends, as for the create operation.
 
@@ -2238,7 +2238,7 @@ paths:
     delete:
       operationId: deleteProductionEntry
       tags: [Metadocuments]
-      summary: Delete Production Entry
+      summary: Delete production entry
       description: |
         Deletes the production entry of the specific metadocument. When the metadocument has no other content, it is deleted as well.
 
@@ -2274,7 +2274,7 @@ paths:
     post:
       operationId: queryMetadocuments
       tags: [Metadocuments]
-      summary: Get Metadocuments
+      summary: Query metadocuments by time range
       description: |
         Gets the metadocuments for the given measurements and time ranges. The request may contain at most 100 queries.
 
@@ -2410,7 +2410,7 @@ paths:
     get:
       operationId: getMetadocumentCommandResult
       tags: [Metadocuments]
-      summary: Get Metadocument Command Result
+      summary: Get metadocument command result
       description: |
         Gets the result of a metadocument command. Poll this endpoint until the `result` reaches one of the final states (see the group description).
       parameters:
@@ -2451,7 +2451,7 @@ paths:
     get:
       operationId: getMetadocumentCommandResultByCustomId
       tags: [Metadocuments]
-      summary: Get Metadocument Command Result by custom identifier
+      summary: Get metadocument command result by custom identifier
       description: |
         Gets the result of a metadocument command by the client-supplied `commandCustomId` that was passed with the command request.
       parameters:
