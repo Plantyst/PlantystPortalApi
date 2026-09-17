@@ -25,7 +25,7 @@ info:
 
     ## Response format (HAL)
 
-    Some API responses use the HAL convention. HAL (Hypertext Application Language) is a standard convention for defining hypermedia such as links to external resources within JSON or XML code. The standard was initially proposed in June 2012 specifically for use with JSON and has since become available in two variations, JSON and XML. The two associated MIME types are media type application/hal+xml and media type application/hal+json. See also https://en.wikipedia.org/wiki/Hypertext_Application_Language.
+    Most read endpoints return their data in the HAL convention (Hypertext Application Language, media type `application/hal+json`): the properties of the resource, its links under `_links` and the related resources under `_embedded`.
 
     To receive responses in the HAL format, send the `Accept: application/hal+json` header with the request. Without this header, the same data are returned in an alternative plain JSON serialization (embedded collections as top-level properties and `_links` as an array of link objects). The examples in this documentation show the HAL format.
 
@@ -5610,6 +5610,7 @@ components:
           description: UTC date and time when the command was processed.
         metadocumentGuid:
           type: string
+          format: uuid
           description: The identifier of the related metadocument.
         _links:
           $ref: "#/components/schemas/HalLinks"
@@ -6385,9 +6386,9 @@ components:
                 $ref: "#/components/schemas/TaskEntry"
             user:
               type: array
+              description: The users referenced by the tasks and their metadocuments.
               items:
-                type: object
-                description: The users referenced by the tasks and their metadocuments.
+                $ref: "#/components/schemas/UserSummary"
             metadocument:
               type: array
               description: The metadocuments the tasks belong to, in the `Metadocument` representation (with their own `_embedded.comment` and `_embedded.productionEntry`). Their users are returned in the list-level `user`.
