@@ -502,7 +502,7 @@ tags:
       __Events__
 
       * `MetadocumentCreate` - a metadocument was created
-      * `MetadocumentUpdate` - a metadocument was updated (including changes of its comments and production entries)
+      * `MetadocumentUpdate` - a metadocument was updated (including changes of its comments and production entries, and the CSV import of production records, which changes the `links` of the job)
       * `MetadocumentDelete` - a metadocument was deleted
 
       __Delivery and acknowledgement__
@@ -2828,6 +2828,7 @@ paths:
         * the imported records are attached to the job as one batch: the job receives a `links` item with `type: 2` (see the `Metadocument` schema), and the manual production-entry operations (`POST`/`PATCH`/`DELETE .../ProductionEntries`) respond with `405 Method Not Allowed` for it from then on
         * the records enter the analytics as NOK quantities (e.g. the `nok` and `Quality` metrics of `/MeasurementMetricsQuery2`); they are returned neither in `_embedded.productionEntry` of the metadocument nor in `productionEntries` of the webhook payload
         * a repeated import of the same work order replaces the previously imported batch
+        * every affected job raises a `MetadocumentUpdate` webhook event (see Webhooks)
 
         __Command result__
 
