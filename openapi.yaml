@@ -353,7 +353,12 @@ tags:
 
       __Access rights__
 
-      Reading metadocuments requires the _View_ right; creating, updating and deleting requires the _Contributor_ right. Metadocuments marked `readOnly` and properties locked by another user (`locks`) cannot be modified; users with the _Admin_ right bypass the locks. Comments can be updated only by their author; deleting another user's comment requires the _Admin_ right.
+      Reading metadocuments requires the _View_ right; creating, updating and deleting - the comments and production entries included - requires the _Contributor_ right. Every rejection below is synchronous, `403 Forbidden`:
+
+      * A metadocument marked `readOnly` cannot be modified by anyone - the _Admin_ right does not lift the flag - and neither can its comments and production entries.
+      * A property locked by another user (`locks`) can be changed only by a user with the _Admin_ right. A lock with the `propertyName` `*` covers the whole metadocument; the locks `Comments` and `ProductionEntries` block adding, updating and deleting those records the same way.
+      * Deleting a metadocument that carries another user's comment or lock requires the _Admin_ right.
+      * A comment can be updated only by its author - the one rule the _Admin_ right does not bypass. Deleting another user's comment requires the _Admin_ right.
   - name: Downtime Codes Dictionary
     description: |
       The downtime code dictionary classifies downtimes by their cause. Every measurement has its own list of codes; a downtime metadocument references a code through its `key` (the `DowntimeCodeKey` property, see Metadocuments).
@@ -5302,7 +5307,7 @@ components:
 
     PropertyLock:
       type: object
-      description: A lock of a metadocument property. Locked properties can be modified only by the user who locked them or by a user with the Admin right.
+      description: A lock of a metadocument property. Locked properties can be modified only by the user who locked them or by a user with the Admin right; the `propertyName` `*` locks the whole metadocument.
       properties:
         propertyName:
           type: string
