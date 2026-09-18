@@ -478,23 +478,48 @@ tags:
       * A SCIM user maps to a Plantyst user: `userName` = email (login), `displayName` = name, `locale` = language. The SCIM `id` equals the `userId` used elsewhere in the API. Deleting a user deactivates it (the account is kept for historical references).
       * A SCIM group maps to a Plantyst __group__ - the primary organizational structure of the customer account. Groups can be nested into a hierarchy (see the `parentGroupDisplayName` extension below), and the group hierarchy can then serve as the hierarchy for measurements - elsewhere in the API it appears as `hierarchicalLocations` and the `groupId` filter of `/Measurements`. A created group becomes a child of the directory root group, or of the group named by `parentGroupDisplayName`. __Group membership controls the access of the users to the measurements under the group.__
 
-      __Plantyst SCIM extensions__
+      __Schema extensions__
 
-      Both resource types carry Plantyst-specific attributes. They are defined by the extension URNs below, but __on the wire they are serialized as plain top-level properties of the resource__ - there is no nested extension object, and the names are case-sensitive. Note an asymmetry in the `schemas` attribute: the user resources list only the core URN, while the group resources list the core and the extension URN.
+      Both resource types carry attributes beyond the SCIM core schema. Each extension is a complex attribute named by its schema URN, and the `schemas` array of the resource lists the URN of every extension the resource carries - the shape RFC 7643 prescribes, so generic SCIM connectors and validators find the attributes without special handling.
 
-      __This serialization deviates from RFC 7643__, which nests extension attributes in a complex attribute named by the extension URN (and requires the URN in `schemas`). Generic SCIM connectors or validators expecting the standard shape will not find these attributes - read and write them as plain top-level properties instead.
+      The Plantyst user extension is always present. The enterprise user extension and the Plantyst group extension appear only when they carry a value; otherwise they are left out of the resource together with their URN in `schemas`.
 
       * `urn:ietf:params:scim:schemas:extension:plantyst:1.0:User`
-        * `Role` - the Plantyst role of the user (read-only)
-        * `ManagedType` - `Managed` (the user is managed by this directory) or `Unmanaged` (an account of the customer outside the directory); read-only, see the `filterManagedType` query parameter
-        * note: both properties are serialized in PascalCase
+        * `role` - the Plantyst role of the user (read-only)
+        * `managedType` - `Managed` (the user is managed by this directory) or `Unmanaged` (an account of the customer outside the directory); read-only, see the `filterManagedType` query parameter
+      * `urn:ietf:params:scim:schemas:extension:enterprise:2.0:User`
+        * `employeeNumber` - the personnel number of the user. It can be set on create, changed with `PATCH` and used in a filter; no value and an empty string mean the same thing, so a filter comparing it to `""` matches the users that have none.
       * `urn:ietf:params:scim:schemas:extension:plantyst:1.0:Group`
         * `parentGroupDisplayName` - the display name of the parent group; builds the group hierarchy. It can also be changed with a `PATCH` operation to move the group under a different parent (the parent must exist in the directory).
         * `shortName` - a short label of the group. The `displayName` must be unique (and therefore tends to be long); where space matters - typically in hierarchical path displays showing the whole chain of groups - the `shortName` is displayed instead. When not set, the `displayName` is used.
 
+      A user carrying both of its extensions looks like this:
+
+      ```json
+      {
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User",
+          "urn:ietf:params:scim:schemas:extension:plantyst:1.0:User",
+          "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+        ],
+        "id": "101",
+        "userName": "jan.novak@example.com",
+        "displayName": "Jan Novák",
+        "active": true,
+        "urn:ietf:params:scim:schemas:extension:plantyst:1.0:User": {
+          "role": "RegularUser",
+          "managedType": "Managed"
+        },
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+          "employeeNumber": "A-1234"
+        }
+      }
+      ```
+
       __Protocol notes__
 
       * Requests and responses use `application/scim+json` (plain `application/json` is accepted as well).
+      * Attribute names in filter expressions and in `PATCH` paths are matched regardless of letter case, and an extension attribute may be written either bare (`shortName`) or qualified with its schema URN (`urn:ietf:params:scim:schemas:extension:plantyst:1.0:Group:shortName`). Both forms address the same attribute.
       * Updates use the SCIM `PatchOp` message; `PUT` replacement is not supported (`501 Not Implemented`).
       * The discovery endpoints (`/ServiceProviderConfig`, `/Schemas`, `/ResourceTypes`) are not implemented.
   - name: Webhooks
@@ -4444,7 +4469,7 @@ paths:
       tags: [SCIM Provisioning]
       summary: Query users (SCIM)
       description: |
-        Returns the users of the directory as a SCIM `ListResponse`. By default only the users managed by the directory are returned; with `filterManagedType=all` the unmanaged users of the customer account are included as well (with `ManagedType: Unmanaged`).
+        Returns the users of the directory as a SCIM `ListResponse`. By default only the users managed by the directory are returned; with `filterManagedType=all` the unmanaged users of the customer account are included as well (their Plantyst extension carries `managedType: Unmanaged`).
       parameters:
         - name: filter
           in: query
@@ -4452,7 +4477,7 @@ paths:
           schema:
             type: string
           example: userName eq "jan.novak@example.com"
-          description: "A SCIM filter expression. Supported attributes: `userName`, `displayName`, `locale`, `name.givenName`, `name.familyName`, `active`; unsupported attributes are ignored."
+          description: "A SCIM filter expression. Supported attributes: `userName`, `displayName`, `locale`, `name.givenName`, `name.familyName`, `active`, `employeeNumber`; unsupported attributes are ignored. Names are matched regardless of letter case and may be qualified with the schema URN of their extension."
         - name: filterManagedType
           in: query
           required: false
@@ -4473,12 +4498,16 @@ paths:
                 itemsPerPage: 1
                 startIndex: 1
                 Resources:
-                  - schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"]
+                  - schemas: ["urn:ietf:params:scim:schemas:core:2.0:User", "urn:ietf:params:scim:schemas:extension:plantyst:1.0:User", "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"]
                     id: "101"
                     userName: jan.novak@example.com
                     displayName: Jan Novák
                     active: true
-                    ManagedType: Managed
+                    "urn:ietf:params:scim:schemas:extension:plantyst:1.0:User":
+                      role: RegularUser
+                      managedType: Managed
+                    "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User":
+                      employeeNumber: A-1234
         "400":
           description: The filter expression is invalid.
         "401":
@@ -4502,7 +4531,7 @@ paths:
             schema:
               $ref: "#/components/schemas/ScimUser"
             example:
-              schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"]
+              schemas: ["urn:ietf:params:scim:schemas:core:2.0:User", "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"]
               userName: jan.novak@example.com
               displayName: Jan Novák
               name:
@@ -4510,6 +4539,8 @@ paths:
                 familyName: Novák
               locale: cs-CZ
               active: true
+              "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User":
+                employeeNumber: A-1234
       responses:
         "201":
           description: The created user, including its `id`.
@@ -4626,7 +4657,7 @@ paths:
           schema:
             type: string
           example: displayName eq "Hall A"
-          description: "A SCIM filter expression. Supported attributes: `displayName`, `shortName`; unsupported attributes are ignored."
+          description: "A SCIM filter expression. Supported attributes: `displayName`, `shortName`; unsupported attributes are ignored. Names are matched regardless of letter case and may be qualified with the schema URN of their extension."
         - name: excludedAttributes
           in: query
           required: false
@@ -4664,10 +4695,11 @@ paths:
             example:
               schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group", "urn:ietf:params:scim:schemas:extension:plantyst:1.0:Group"]
               displayName: Line 1 (Hall A)
-              shortName: Line 1
-              parentGroupDisplayName: Hall A
               members:
                 - value: "101"
+              "urn:ietf:params:scim:schemas:extension:plantyst:1.0:Group":
+                shortName: Line 1
+                parentGroupDisplayName: Hall A
       responses:
         "201":
           description: The created group, including its `id`.
@@ -4717,18 +4749,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScimGroup"
               example:
-                schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"]
+                schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group", "urn:ietf:params:scim:schemas:extension:plantyst:1.0:Group"]
                 id: "51"
                 displayName: Hall A
-                shortName: A
                 members:
                   - value: "101"
+                "urn:ietf:params:scim:schemas:extension:plantyst:1.0:Group":
+                  shortName: A
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           description: The credential is not bound to the directory given in the URL.
         "404":
-          description: The group does not exist - or the lookup of an existing group failed on a missing group-directory link (a known server-side issue affecting individual group retrieval and updates; the query, create and delete endpoints are not affected). Use the query endpoint with a `displayName` filter as a workaround.
+          description: No group with the given identifier exists under the directory.
     patch:
       operationId: scimPatchGroup
       security:
@@ -6121,14 +6154,14 @@ components:
 
     ScimUser:
       type: object
-      description: A SCIM 2.0 user. The `Role` and `ManagedType` properties are Plantyst extensions (note their PascalCase names). Unlike the HAL endpoints, the SCIM responses include properties with `null` values.
+      description: A SCIM 2.0 user. The attributes beyond the core schema are carried in the extension objects named by their schema URN (see the group description). Unlike the HAL endpoints, the SCIM responses include properties with `null` values.
       required: [userName]
       properties:
         schemas:
           type: array
           items:
             type: string
-          description: "Always `[\"urn:ietf:params:scim:schemas:core:2.0:User\"]` - the extension URN is not listed even though the extension properties are present."
+          description: "The core user URN, the Plantyst extension URN, and the enterprise extension URN when the user has an `employeeNumber`."
         id:
           type: string
           description: The SCIM identifier; equals the Plantyst `userId`. Assigned by the server.
@@ -6161,26 +6194,37 @@ components:
         active:
           type: boolean
           description: Setting `active` to `false` deactivates the user.
-        Role:
-          type: [string, "null"]
-          description: Plantyst extension - the Plantyst role of the user. Read-only. Note the PascalCase name.
-        ManagedType:
-          type: string
-          enum: [Managed, Unmanaged]
-          description: Plantyst extension - whether the user is managed by this directory. Read-only. Note the PascalCase name.
+        "urn:ietf:params:scim:schemas:extension:plantyst:1.0:User":
+          type: object
+          description: The Plantyst extension of the user. Always present.
+          properties:
+            role:
+              type: [string, "null"]
+              description: The Plantyst role of the user. Read-only.
+            managedType:
+              type: string
+              enum: [Managed, Unmanaged]
+              description: Whether the user is managed by this directory. Read-only.
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User":
+          type: object
+          description: The enterprise extension of the user. Present only when the user has an `employeeNumber`.
+          properties:
+            employeeNumber:
+              type: string
+              description: The personnel number of the user. Writable on create and with `PATCH`, and usable in a filter.
         meta:
           $ref: "#/components/schemas/ScimMeta"
 
     ScimGroup:
       type: object
-      description: A SCIM 2.0 group, mapping to a Plantyst group - the primary organizational structure. The group hierarchy (built with `parentGroupDisplayName`) can serve as the hierarchy for measurements (see the group description). The `shortName` and `parentGroupDisplayName` properties are Plantyst extensions (`urn:ietf:params:scim:schemas:extension:plantyst:1.0:Group`).
+      description: A SCIM 2.0 group, mapping to a Plantyst group - the primary organizational structure. The group hierarchy (built with `parentGroupDisplayName`) can serve as the hierarchy for measurements (see the group description). `shortName` and `parentGroupDisplayName` are carried in the Plantyst extension object named by its schema URN.
       required: [displayName]
       properties:
         schemas:
           type: array
           items:
             type: string
-          description: "`urn:ietf:params:scim:schemas:core:2.0:Group` and the Plantyst extension `urn:ietf:params:scim:schemas:extension:plantyst:1.0:Group`."
+          description: "The core group URN, and the Plantyst extension URN when the group carries `shortName` or `parentGroupDisplayName`."
         id:
           type: string
           description: The SCIM identifier; equals the group identifier used elsewhere in the API (`groupId`, `hierarchicalLocationId`). Assigned by the server.
@@ -6194,12 +6238,16 @@ components:
               value:
                 type: string
                 description: The SCIM user identifier of the member.
-        shortName:
-          type: [string, "null"]
-          description: Plantyst extension - a short label of the group. The `displayName` must be unique and therefore tends to be long; `shortName` is used instead of it where space matters (e.g. in hierarchical path displays showing the whole chain of groups). When not set, the `displayName` is used.
-        parentGroupDisplayName:
-          type: [string, "null"]
-          description: Plantyst extension - the display name of the parent group (it must exist in the directory); when omitted on create, the group is created under the directory root group. Change it with a PATCH operation to move the group under a different parent.
+        "urn:ietf:params:scim:schemas:extension:plantyst:1.0:Group":
+          type: object
+          description: The Plantyst extension of the group. Present only when at least one of its attributes has a value.
+          properties:
+            shortName:
+              type: [string, "null"]
+              description: A short label of the group. The `displayName` must be unique and therefore tends to be long; `shortName` is used instead of it where space matters (e.g. in hierarchical path displays showing the whole chain of groups). When not set, the `displayName` is used.
+            parentGroupDisplayName:
+              type: [string, "null"]
+              description: The display name of the parent group (it must exist in the directory); when omitted on create, the group is created under the directory root group. Change it with a PATCH operation to move the group under a different parent.
         meta:
           $ref: "#/components/schemas/ScimMeta"
 
