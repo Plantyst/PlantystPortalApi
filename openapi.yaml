@@ -2241,7 +2241,7 @@ paths:
 
         Required access right: _Contributor_.
 
-        The replacement covers every property - an omitted `Note` or `Reason` clears the stored value, and an omitted `Time` moves the entry to the current time. Send the unchanged properties along with the changed one.
+        The replacement covers every property - an omitted `Note`, `Reason` or `EmployeeNumber` clears the stored value, and an omitted `Time` moves the entry to the current time. Send the unchanged properties along with the changed one.
 
         __Note:__ Updating a production entry assigns it a new `id` (the `id` identifies the entry and its version), and every further update assigns the next one. Re-read the metadocument to get the current `id` before a subsequent update or delete - repeating this request with the previous `id` ends with `404 Not Found`, synchronously and without creating a command, so such a repeat never applies twice.
       parameters:
@@ -5292,6 +5292,9 @@ components:
         reason:
           type: string
           description: The reason of the entry (e.g. why the amount was corrected).
+        employeeNumber:
+          type: [string, "null"]
+          description: The personnel number of the operator the entry belongs to. It is carried with the entry as a plain value - it is not resolved against the users of the account, so it is returned exactly as it was sent even when no user has it.
         _links:
           $ref: "#/components/schemas/HalLinks"
 
@@ -5317,6 +5320,10 @@ components:
         Reason:
           type: string
           description: The reason of the entry (e.g. why the amount was corrected).
+        EmployeeNumber:
+          type: string
+          maxLength: 30
+          description: The personnel number of the operator the entry belongs to. A longer value is rejected with `400 Bad Request`.
 
     MetadocumentLink:
       type: object
@@ -6013,6 +6020,9 @@ components:
           type: string
         note:
           type: [string, "null"]
+        employeeNumber:
+          type: [string, "null"]
+          description: The personnel number carried with the entry.
 
     WebhookMetadocument:
       type: object
@@ -6124,6 +6134,9 @@ components:
         language:
           type: [string, "null"]
           description: The preferred language of the user (e.g. `cs-CZ`).
+        employeeNumber:
+          type: [string, "null"]
+          description: The personnel number of the user; `null` when the user has none. It is provisioned through SCIM (see SCIM Provisioning).
         _links:
           $ref: "#/components/schemas/HalLinks"
 
