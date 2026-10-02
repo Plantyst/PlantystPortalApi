@@ -136,7 +136,7 @@ info:
 
     1. Register the webhook - contact [support@plantyst.com](mailto:support@plantyst.com) with the callback URL (see Webhooks for the details and the payload contract).
     2. Receive the events - the platform POSTs an envelope with the `eventType` (`MetadocumentCreate` / `MetadocumentUpdate` / `MetadocumentDelete`) and the changed metadocument in `data`.
-    3. Acknowledge every delivery quickly with a `2xx` response - otherwise the event is delivered again.
+    3. Acknowledge every delivery quickly with a `2xx` response. Each event is delivered once - a delivery that fails is not repeated, so handle transient failures of your own processing inside the handler.
     4. Skip the echoes of your own changes: compare the `commandGuid` of the event with the command identifiers of your own API calls (the last segment of the `location` URL returned by a command).
     5. When the handler needs more data, call the API back with the token from `authorization.value` of the envelope.
 
@@ -534,7 +534,14 @@ tags:
 
       __Delivery and acknowledgement__
 
-      The delivery is a `POST` request with an `application/json` body (see the webhook definition below). Acknowledge it with any `2xx` status code; other status codes and unreachable URLs cause several redelivery attempts before the delivery is dropped. Deliveries may occasionally arrive out of order or repeatedly - use `data.lastModified` and `data.eTag` to decide whether the payload is newer than your state.
+      The delivery is a `POST` request with an `application/json` body (see the webhook definition below). Acknowledge it with any `2xx` status code.
+
+      __Each event is delivered once.__ A delivery that does not succeed - the URL is unreachable, the request times out, or the endpoint answers with any status code other than `2xx` - is not repeated, and the event is not delivered again. The webhook notifies about a change; it does not guarantee that the notification arrives. Two things follow for the receiver:
+
+      * Handle transient failures of your own processing inside the handler - for example by retrying your own calls - rather than answering with an error. An error response does not bring the event back.
+      * Treat the REST API as the source of truth. To catch up on changes the endpoint may have missed, for example while it was unavailable, read the current state of the affected range with `POST /MetadocumentsQuery`.
+
+      Deliveries may occasionally arrive out of order or more than once - use `data.lastModified` and `data.eTag` to decide whether the payload is newer than your state.
 
       __Security and the recommended integration pattern__
 
@@ -4945,7 +4952,7 @@ webhooks:
               appliedChanges: "[{\"op\":\"replace\",\"path\":\"/DowntimeCode\",\"value\":\"144\"}]"
       responses:
         "2XX":
-          description: Return any `2xx` status code to acknowledge the delivery. Any other status code (or an unreachable URL) causes the delivery to be retried several times before it is dropped.
+          description: Return any `2xx` status code to acknowledge the delivery. The delivery is made once whatever its outcome - another status code, a timeout or an unreachable URL means the event is not delivered, and it is not sent again.
 
 components:
   securitySchemes:
